@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Compass design tokens — Attio-inspired: quiet, dense, 1px borders ────── */
+:root {
+  --bg: #ffffff;
+  --panel: #fafafa;
+  --border: #eaecf0;
+  --text-primary: #101828;
+  --text-secondary: #667085;
+  --accent: #2563eb;
+
+  --green: #12b76a;
+  --amber: #f79009;
+  --red: #f04438;
+  --green-tint: #ecfdf3;
+  --amber-tint: #fffaeb;
+  --red-tint: #fef3f2;
+  --accent-tint: #eff6ff;
+
+  --radius: 8px;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* Tabular numerals everywhere metrics appear */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Thin, quiet scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #e4e7ec;
+  border-radius: 8px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #d0d5dd;
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border bg-white;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-sm font-medium;
+  }
+  .kbd {
+    @apply inline-flex h-5 min-w-5 items-center justify-center rounded border bg-panel px-1 text-xs text-muted-foreground;
+  }
+  /* Dense list rows */
+  .row {
+    height: 36px;
+  }
+  .page-title {
+    @apply text-xl font-semibold text-foreground;
+  }
+  .section-title {
+    @apply text-md font-semibold text-foreground;
+  }
+}
