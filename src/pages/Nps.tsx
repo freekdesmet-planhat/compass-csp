@@ -51,6 +51,7 @@ export default function NpsPage() {
   const trend = useMemo(() => {
     const byMonth = new Map<string, number[]>();
     for (const n of nps) {
+      if (!n.respondedAt) continue; // defensive: skip responses without a date
       const m = n.respondedAt.slice(0, 7);
       (byMonth.get(m) ?? byMonth.set(m, []).get(m)!).push(n.score);
     }

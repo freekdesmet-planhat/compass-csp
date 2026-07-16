@@ -175,7 +175,9 @@ function buildCompany(
       isPrimary: i === 0, isChampion: chance(0.3), hasInfluence: role === 'exec_sponsor' || role === 'decision_maker', isAdvocate: chance(0.25),
       advocateType: chance(0.25) ? pick(['reference', 'case_study', 'referral']) : null,
       reportsToContactId: i > 0 && chance(0.5) ? contacts[0]?.id : null,
-      npsLatest: chance(0.6) ? randInt(-20, 100) : null, npsLatestAt: chance(0.6) ? daysAgo(randInt(10, 120)) : null,
+      // Single roll so npsLatest and npsLatestAt stay consistent (a score always
+      // carries a date — otherwise an NPS response gets a null respondedAt).
+      ...(chance(0.6) ? { npsLatest: randInt(-20, 100), npsLatestAt: daysAgo(randInt(10, 120)) } : { npsLatest: null, npsLatestAt: null }),
       sentiment30d: pick(['positive', 'neutral', 'negative', 'positive', 'neutral']),
       engagementScore: randInt(20, 95), lastActiveAt: daysAgo(randInt(0, 40)), lastTouchAt: daysAgo(randInt(0, 60)), archived: false,
     };

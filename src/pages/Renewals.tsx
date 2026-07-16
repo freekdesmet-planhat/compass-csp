@@ -12,6 +12,26 @@ import type { Company, Deal, Segment } from '@/lib/types';
 
 const STAGE_ORDER = ['T-120 Review', 'Exec Check-in', 'Proposal Sent', 'Negotiation', 'Verbal Commit', 'Closed Won'];
 
+type TimeWin = 'all' | 'this_month' | 'next_month' | 'this_quarter' | 'next_quarter' | 'in_2_months';
+const TIME_LABELS: Record<TimeWin, string> = {
+  all: 'Any time', this_month: 'This month', next_month: 'Next month',
+  this_quarter: 'This quarter', next_quarter: 'Next quarter', in_2_months: 'In 2 months',
+};
+// Match a renewal/close date against a rolling time window (relative to today).
+function inWindow(dateStr: string | null | undefined, win: TimeWin): boolean {
+  if (win === 'all') return true;
+  if (!dateStr) return false;
+  const d = new Date(dateStr); const now = new Date();
+  if (win === 'in_2_months') { const days = daysUntil(dateStr) ?? -1; return days >= 0 && days <= 60; }
+  const y = d.getFullYear(), m = d.getMonth(), ny = now.getFullYear(), nm = now.getMonth();
+  if (win === 'this_month') return y === ny && m === nm;
+  if (win === 'next_month') { const nd = new Date(ny, nm + 1, 1); return y === nd.getFullYear() && m === nd.getMonth(); }
+  const q = Math.floor(m / 3), nq = Math.floor(nm / 3);
+  if (win === 'this_quarter') return y === ny && q === nq;
+  if (win === 'next_quarter') { let ty = ny, tq = nq + 1; if (tq > 3) { tq = 0; ty++; } return y === ty && q === tq; }
+  return true;
+}
+
 export default function RenewalsPage() {
   const navigate = useNavigate();
   const { profile, allProfiles } = useSession();
@@ -20,6 +40,8 @@ export default function RenewalsPage() {
   const [view, setView] = useState<'kanban' | 'forecast' | 'expansion'>('kanban');
   const [segFilter, setSegFilter] = useState<Segment | 'all'>('all');
   const [ownerFilter, setOwnerFilter] = useState('all');
+  const [timeFilter, setTimeFilter] = useState<TimeWin>('all');
+  const [healthFilter, setHealthFilter] = useState<'all' | 'green' | 'amber' | 'red'>('all');
   const isManager = profile.role === 'manager' || profile.role === 'admin';
 
   const companyById = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
@@ -30,14 +52,18 @@ export default function RenewalsPage() {
       const c = companyById.get(d.companyId);
       if (segFilter !== 'all' && c?.segment !== segFilter) return false;
       if (ownerFilter !== 'all' && c?.ownerId !== ownerFilter) return false;
+      if (healthFilter !== 'all' && c?.healthBand !== healthFilter) return false;
+      if (!inWindow(d.closeDate ?? c?.renewalDate, timeFilter)) return false;
       return true;
     }),
-    [allDeals, visibleIds, companyById, segFilter, ownerFilter]
+    [allDeals, visibleIds, companyById, segFilter, ownerFilter, healthFilter, timeFilter]
   );
 
   const filteredCompanies = companies.filter((c) => {
     if (segFilter !== 'all' && c.segment !== segFilter) return false;
     if (ownerFilter !== 'all' && c.ownerId !== ownerFilter) return false;
+    if (healthFilter !== 'all' && c.healthBand !== healthFilter) return false;
+    if (!inWindow(c.renewalDate, timeFilter)) return false;
     return c.status !== 'churned';
   });
 
@@ -75,6 +101,14 @@ export default function RenewalsPage() {
             <Select value={segFilter} onValueChange={(v) => setSegFilter(v as Segment | 'all')}>
               <SelectTrigger className="w-32"><SelectValue placeholder="Segment" /></SelectTrigger>
               <SelectContent><SelectItem value="all">All segments</SelectItem><SelectItem value="scaled">Scaled</SelectItem><SelectItem value="mid_touch">Mid-touch</SelectItem><SelectItem value="enterprise">Enterprise</SelectItem></SelectContent>
+            </Select>
+            <Select value={timeFilter} onValueChange={(v) => setTimeFilter(v as TimeWin)}>
+              <SelectTrigger className="w-36"><SelectValue placeholder="When" /></SelectTrigger>
+              <SelectContent>{(Object.keys(TIME_LABELS) as TimeWin[]).map((w) => <SelectItem key={w} value={w}>{TIME_LABELS[w]}</SelectItem>)}</SelectContent>
+            </Select>
+            <Select value={healthFilter} onValueChange={(v) => setHealthFilter(v as 'all' | 'green' | 'amber' | 'red')}>
+              <SelectTrigger className="w-32"><SelectValue placeholder="Health" /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All health</SelectItem><SelectItem value="green">Green</SelectItem><SelectItem value="amber">Amber</SelectItem><SelectItem value="red">Red</SelectItem></SelectContent>
             </Select>
             <div className="flex rounded-md border p-0.5">
               <button onClick={() => setView('kanban')} className={`rounded px-2 py-1 text-sm font-medium ${view === 'kanban' ? 'bg-panel text-foreground' : 'text-muted-foreground'}`}>Kanban</button>
