@@ -1,18 +1,23 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
-import { Card, CardHeader, CardTitle, CardBody, Chip, EmptyState, DeltaArrow } from '@/components/ui';
+import { Card, CardHeader, CardTitle, CardBody, Chip, EmptyState, DeltaArrow, Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui';
 import { DataTable } from '@/components/DataTable';
+import { Dashboards } from './Dashboards';
 import { useVisibleCompanies, useProfiles, useTasks, useActivities, useNps, useDeals } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { fmtCurrency, daysUntil } from '@/lib/utils';
+import { filterToQuery } from '@/lib/portfolioFilters';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, Legend } from 'recharts';
 import { BarChart3, ChevronDown } from 'lucide-react';
 import type { Segment } from '@/lib/types';
 
 const SEGMENTS: Segment[] = ['scaled', 'mid_touch', 'enterprise'];
+const LABEL_TO_SEGMENT: Record<string, Segment> = { Scaled: 'scaled', 'Mid-touch': 'mid_touch', Enterprise: 'enterprise' };
 
 export default function ReportsPage() {
   const { profile, allProfiles } = useSession();
+  const navigate = useNavigate();
   const { data: companies = [] } = useVisibleCompanies();
   const { data: profiles = [] } = useProfiles();
   const { data: tasks = [] } = useTasks();
@@ -20,8 +25,7 @@ export default function ReportsPage() {
   const { data: nps = [] } = useNps();
   const { data: deals = [] } = useDeals();
 
-  if (profile.role === 'csm') return <div><PageHeader title="Reports" /><PageBody><EmptyState icon={BarChart3} title="Reports are available to managers" hint="Ask your admin for a manager role to see team roll-ups." /></PageBody></div>;
-
+  const isManager = profile.role === 'manager' || profile.role === 'admin';
   const visibleIds = useMemo(() => new Set(companies.map((c) => c.id)), [companies]);
   const team = profiles.filter((p) => p.role === 'csm' && (profile.role === 'admin' || p.managerId === profile.id));
 
@@ -54,18 +58,26 @@ export default function ReportsPage() {
 
   return (
     <div>
-      <PageHeader title="Reports" subtitle={`Team roll-up · ${team.length} CSMs · ${companies.length} accounts`} />
+      <PageHeader title="Reports" subtitle={isManager ? `Team roll-up · ${team.length} CSMs · ${companies.length} accounts` : 'Dashboards'} />
       <PageBody>
+        <Tabs defaultValue={isManager ? 'overview' : 'dashboards'}>
+          <TabsList className="mb-4">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="dashboards">Dashboards</TabsTrigger>
+          </TabsList>
+          <TabsContent value="dashboards"><Dashboards /></TabsContent>
+          <TabsContent value="overview">
+        {!isManager ? <EmptyState icon={BarChart3} title="The Overview roll-up is for managers" hint="Your Dashboards tab is right here — build and share your own." /> : <>
         <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Stat label="At-risk ARR" value={fmtCurrency(atRiskArr)} sub={`${atRisk.length} accounts`} />
-          <Stat label="Renewal forecast" value={fmtCurrency(forecast)} node={<DeltaArrow delta={Math.round((forecast - priorForecast) / 1000)} />} sub="weighted · vs last wk" />
-          <Stat label="Portfolio NPS" value={String(nps.length ? Math.round(nps.reduce((a, n) => a + n.score, 0) / nps.length) : 0)} sub={`${nps.length} responses`} />
-          <Stat label="Green accounts" value={`${companies.filter((c) => c.healthBand === 'green').length}/${companies.length}`} />
+          <Stat label="At-risk ARR" value={fmtCurrency(atRiskArr)} sub={`${atRisk.length} accounts`} onClick={() => navigate(`/portfolio${filterToQuery({ atRiskRenewal: true })}`)} />
+          <Stat label="Renewal forecast" value={fmtCurrency(forecast)} node={<DeltaArrow delta={Math.round((forecast - priorForecast) / 1000)} />} sub="weighted · vs last wk" onClick={() => navigate('/renewals')} />
+          <Stat label="Portfolio NPS" value={String(nps.length ? Math.round(nps.reduce((a, n) => a + n.score, 0) / nps.length) : 0)} sub={`${nps.length} responses`} onClick={() => navigate('/nps')} />
+          <Stat label="Green accounts" value={`${companies.filter((c) => c.healthBand === 'green').length}/${companies.length}`} onClick={() => navigate(`/portfolio${filterToQuery({ healthBand: 'green' })}`)} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
-            <CardHeader><CardTitle>Health distribution by segment</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Health distribution by segment</CardTitle><span className="text-xs text-muted-foreground">Click a bar to drill in</span></CardHeader>
             <CardBody>
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
@@ -74,9 +86,9 @@ export default function ReportsPage() {
                     <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} allowDecimals={false} />
                     <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="green" stackId="a" fill="var(--green)" />
-                    <Bar dataKey="amber" stackId="a" fill="var(--amber)" />
-                    <Bar dataKey="red" stackId="a" fill="var(--red)" />
+                    <Bar dataKey="green" stackId="a" fill="var(--green)" cursor="pointer" onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'green' })}`)} />
+                    <Bar dataKey="amber" stackId="a" fill="var(--amber)" cursor="pointer" onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'amber' })}`)} />
+                    <Bar dataKey="red" stackId="a" fill="var(--red)" cursor="pointer" onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'red' })}`)} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -90,6 +102,7 @@ export default function ReportsPage() {
                 rows={leaderboard}
                 rowKey={(r) => r.id}
                 dense
+                onRowClick={(r) => navigate(`/portfolio${filterToQuery({ owner: r.id })}`)}
                 defaultSort={{ key: 'meetings', dir: 'desc' }}
                 columns={[
                   { key: 'name', header: 'CSM', render: (r) => <span className="font-medium">{r.name}</span> },
@@ -105,14 +118,17 @@ export default function ReportsPage() {
         </div>
 
         <ExecArchive />
+        </>}
+          </TabsContent>
+        </Tabs>
       </PageBody>
     </div>
   );
 }
 
-function Stat({ label, value, sub, node }: { label: string; value: string; sub?: string; node?: React.ReactNode }) {
+function Stat({ label, value, sub, node, onClick }: { label: string; value: string; sub?: string; node?: React.ReactNode; onClick?: () => void }) {
   return (
-    <Card className="px-3 py-2.5">
+    <Card className={`px-3 py-2.5${onClick ? ' cursor-pointer transition-colors hover:border-[var(--accent)]' : ''}`} onClick={onClick}>
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
       <div className="mt-0.5 flex items-center gap-2 text-2xl font-semibold tnum">{value}{node}</div>
       {sub && <div className="text-xs text-muted-foreground">{sub}</div>}

@@ -17,6 +17,8 @@ export interface Profile {
   timezone: string;
   digestHour: number;
   isActive: boolean;
+  sidebarCollapsed?: boolean;
+  lastSeenVersion?: string | null;
 }
 
 export interface Company {
@@ -58,6 +60,9 @@ export interface Company {
   lastTouchAt?: string | null;
   lastTouchType?: string | null;
   nextTouchAt?: string | null;
+  latestNews?: string | null;
+  latestNewsAt?: string | null;
+  latestNewsSources?: { title?: string; url: string }[] | null;
   source?: string;
 }
 
@@ -147,6 +152,7 @@ export interface Note {
 
 export type TaskPriority = 'low' | 'normal' | 'high';
 export type TaskOrigin = 'manual' | 'playbook' | 'ai_call' | 'ai_recommendation' | 'alert';
+export type TaskType = 'todo' | 'email' | 'call' | 'check_in' | 'meeting';
 
 export interface Task {
   id: string;
@@ -155,6 +161,7 @@ export interface Task {
   creatorId?: string | null;
   title: string;
   description?: string | null;
+  taskType: TaskType;
   dueDate?: string | null;
   completedAt?: string | null;
   priority: TaskPriority;
@@ -162,6 +169,7 @@ export interface Task {
   playbookRunStepId?: string | null;
   sourceActivityId?: string | null;
   successPlanObjectiveId?: string | null;
+  contactId?: string | null;
 }
 
 export type DealPipeline = 'renewal' | 'expansion' | 'new_business';
@@ -431,4 +439,113 @@ export interface OutreachState {
   step?: number | null;
   state?: string | null;
   lastTouchAt?: string | null;
+}
+
+// ── V1.1 additions ────────────────────────────────────────────────────────────
+export interface Product {
+  id: string;
+  name: string;
+  category?: string | null;
+  position: number;
+}
+
+export type CompanyProductStatus = 'current' | 'active_opp' | 'need_to_discuss' | 'rejected' | 'none';
+
+export interface CompanyProduct {
+  id: string;
+  companyId: string;
+  productId: string;
+  status: CompanyProductStatus;
+  arr?: number | null;
+  note?: string | null;
+  updatedBy?: string | null;
+}
+
+export type NotificationKind = 'mention' | 'task_assigned' | 'system';
+
+export interface Notification {
+  id: string;
+  userId: string;
+  kind: NotificationKind;
+  title: string;
+  body?: string | null;
+  link?: string | null;
+  readAt?: string | null;
+  createdAt: string;
+}
+
+export type LibraryItemType = 'deck' | 'doc' | 'template' | 'link';
+
+export interface LibraryItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  itemType: LibraryItemType;
+  url?: string | null;
+  storagePath?: string | null;
+  tags: string[];
+  segments: string[];
+  uploadedBy?: string | null;
+  downloadCount: number;
+  createdAt: string;
+}
+
+export type WidgetKind = 'metric' | 'bar' | 'line' | 'donut' | 'table';
+
+export interface DashboardWidget {
+  id: string;
+  dashboardId: string;
+  position: { x: number; y: number; w: number; h: number };
+  kind: WidgetKind;
+  dataset: string;
+  groupBy?: string | null;
+  measure?: string | null;
+  filter: Record<string, unknown>;
+  title: string;
+}
+
+export interface Dashboard {
+  id: string;
+  name: string;
+  ownerId?: string | null;
+  shared: boolean;
+  layout: unknown;
+}
+
+export interface ImportRun {
+  id: string;
+  entity: string;
+  mode: string;
+  stats: Record<string, unknown>;
+  reportPath?: string | null;
+  runBy?: string | null;
+  createdAt: string;
+}
+
+export interface AskThread {
+  id: string;
+  userId: string;
+  title: string;
+  createdAt: string;
+}
+
+export interface AskMessage {
+  id: string;
+  threadId: string;
+  role: 'user' | 'assistant' | 'tool';
+  content: string;
+  toolCalls?: { name: string; args?: unknown }[] | null;
+  createdAt: string;
+}
+
+export type ChangelogCategory = 'new' | 'improved' | 'fixed';
+
+export interface ChangelogEntry {
+  id: string;
+  version: string;
+  releasedOn?: string | null;
+  category: ChangelogCategory;
+  title: string;
+  body?: string | null;
+  position: number;
 }

@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
 import { DataTable, type Column } from '@/components/DataTable';
 import { Card, CardHeader, CardTitle, CardBody, Chip, HealthChip, HealthDot, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, EmptyState } from '@/components/ui';
-import { useVisibleCompanies, useDeals } from '@/lib/hooks';
+import { useVisibleCompanies, useDeals, useProducts, useCompanyProducts } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { fmtCurrency, fmtDateShort, daysUntil, healthFactor } from '@/lib/utils';
+import { WhitespaceCell } from '@/components/Whitespace';
 import { Handshake } from 'lucide-react';
 import type { Company, Deal, Segment } from '@/lib/types';
 
@@ -16,7 +17,7 @@ export default function RenewalsPage() {
   const { profile, allProfiles } = useSession();
   const { data: companies = [] } = useVisibleCompanies();
   const { data: allDeals = [] } = useDeals();
-  const [view, setView] = useState<'kanban' | 'forecast'>('kanban');
+  const [view, setView] = useState<'kanban' | 'forecast' | 'expansion'>('kanban');
   const [segFilter, setSegFilter] = useState<Segment | 'all'>('all');
   const [ownerFilter, setOwnerFilter] = useState('all');
   const isManager = profile.role === 'manager' || profile.role === 'admin';
@@ -78,6 +79,7 @@ export default function RenewalsPage() {
             <div className="flex rounded-md border p-0.5">
               <button onClick={() => setView('kanban')} className={`rounded px-2 py-1 text-sm font-medium ${view === 'kanban' ? 'bg-panel text-foreground' : 'text-muted-foreground'}`}>Kanban</button>
               <button onClick={() => setView('forecast')} className={`rounded px-2 py-1 text-sm font-medium ${view === 'forecast' ? 'bg-panel text-foreground' : 'text-muted-foreground'}`}>Forecast</button>
+              <button onClick={() => setView('expansion')} className={`rounded px-2 py-1 text-sm font-medium ${view === 'expansion' ? 'bg-panel text-foreground' : 'text-muted-foreground'}`}>Expansion</button>
             </div>
           </div>
         }
@@ -92,7 +94,7 @@ export default function RenewalsPage() {
           </div>
         )}
 
-        {view === 'kanban' ? (
+        {view === 'kanban' && (
           <div className="mb-4 flex gap-3 overflow-x-auto pb-2">
             {STAGE_ORDER.map((stage) => {
               const cards = renewalDeals.filter((d) => d.stage === stage);
@@ -119,11 +121,13 @@ export default function RenewalsPage() {
               );
             })}
           </div>
-        ) : (
-          <Forecast deals={renewalDeals} companyById={companyById} />
         )}
+        {view === 'forecast' && <Forecast deals={renewalDeals} companyById={companyById} />}
+        {view === 'expansion' && <ExpansionHeatmap companies={filteredCompanies} />}
 
-        <DataTable columns={tableColumns} rows={filteredCompanies.filter((c) => c.renewalDate)} rowKey={(c) => c.id} onRowClick={(c) => navigate(`/company/${c.id}?tab=deals`)} defaultSort={{ key: 'days', dir: 'asc' }} empty={<EmptyState icon={Handshake} title="No renewals" />} />
+        {view !== 'expansion' && (
+          <DataTable columns={tableColumns} rows={filteredCompanies.filter((c) => c.renewalDate)} rowKey={(c) => c.id} onRowClick={(c) => navigate(`/company/${c.id}?tab=deals`)} defaultSort={{ key: 'days', dir: 'asc' }} empty={<EmptyState icon={Handshake} title="No renewals" />} />
+        )}
       </PageBody>
     </div>
   );
@@ -131,6 +135,61 @@ export default function RenewalsPage() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return <Card className="px-3 py-2.5"><div className="text-xs font-medium text-muted-foreground">{label}</div><div className="mt-0.5 text-2xl font-semibold tnum">{value}</div></Card>;
+}
+
+// Expansion heatmap (C5b): accounts × products, sortable by whitespace count.
+function ExpansionHeatmap({ companies }: { companies: Company[] }) {
+  const navigate = useNavigate();
+  const { data: products = [] } = useProducts();
+  const { data: cps = [] } = useCompanyProducts();
+  const [sortByWhitespace, setSortByWhitespace] = useState(true);
+
+  const cpFor = (companyId: string, productId: string) => cps.find((c) => c.companyId === companyId && c.productId === productId);
+  const whitespaceCount = (companyId: string) => products.filter((p) => (cpFor(companyId, p.id)?.status ?? 'none') === 'none').length;
+
+  const rows = useMemo(() => {
+    const arr = [...companies];
+    if (sortByWhitespace) arr.sort((a, b) => whitespaceCount(b.id) - whitespaceCount(a.id));
+    else arr.sort((a, b) => a.name.localeCompare(b.name));
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companies, cps, products, sortByWhitespace]);
+
+  // ARR-weighted whitespace: Σ arr × (empty cells / product count).
+  const whitespaceArr = companies.reduce((a, c) => a + (c.arr ?? 0) * (whitespaceCount(c.id) / (products.length || 1)), 0);
+  const accountsWithWhitespace = companies.filter((c) => whitespaceCount(c.id) > 0).length;
+
+  if (!companies.length) return <EmptyState icon={Handshake} title="No accounts in scope" />;
+
+  return (
+    <Card className="mb-4">
+      <CardHeader>
+        <CardTitle>Whitespace — {fmtCurrency(whitespaceArr)} ARR-weighted across {accountsWithWhitespace} accounts</CardTitle>
+        <button onClick={() => setSortByWhitespace((s) => !s)} className="text-xs text-[var(--accent)] hover:underline">Sort: {sortByWhitespace ? 'whitespace ▾' : 'name'}</button>
+      </CardHeader>
+      <CardBody className="overflow-x-auto p-0">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b bg-panel/60">
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Account</th>
+              {products.map((p) => <th key={p.id} className="px-2 py-2 text-center text-xs font-medium text-muted-foreground" style={{ minWidth: 96 }}>{p.name}</th>)}
+              <th className="px-2 py-2 text-right font-medium text-muted-foreground">WS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 200).map((c) => (
+              <tr key={c.id} className="border-b last:border-0">
+                <td className="px-3 py-1.5"><button className="font-medium hover:text-[var(--accent)]" onClick={() => navigate(`/company/${c.id}?tab=deals`)}>{c.name}</button></td>
+                {products.map((p) => <td key={p.id} className="px-1 py-1"><WhitespaceCell companyId={c.id} product={p} cp={cpFor(c.id, p.id)} compact /></td>)}
+                <td className="px-2 py-1.5 text-right tnum text-muted-foreground">{whitespaceCount(c.id)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length > 200 && <div className="px-3 py-2 text-xs text-muted-foreground">Showing first 200 of {rows.length} accounts.</div>}
+      </CardBody>
+    </Card>
+  );
 }
 
 function quarterOf(date?: string | null): string {

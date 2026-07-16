@@ -1,7 +1,7 @@
 {
   "name": "compass-csp",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,9 @@
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
     "migrate:planhat": "tsx scripts/migrate-planhat.ts",
-    "seed:demo": "tsx scripts/seed-demo.ts"
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "backfill:email-contacts": "tsx scripts/backfill-email-contacts.ts",
+    "changelog:sync": "tsx scripts/changelog-sync.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.1",

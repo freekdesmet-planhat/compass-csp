@@ -6,6 +6,7 @@ import { useProfiles, useAlertRules, useVisibleCompanies } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS, HEALTH_DIMENSIONS, SEGMENT_LABELS, type Segment } from '@/lib/segments';
+import { ImportWizard } from './Import';
 import { Shield, Plug, ChevronDown } from 'lucide-react';
 import type { Profile } from '@/lib/types';
 
@@ -24,6 +25,7 @@ export default function AdminPage() {
             <TabsTrigger value="alerts">Alert rules</TabsTrigger>
             <TabsTrigger value="playbooks">Playbooks</TabsTrigger>
             <TabsTrigger value="integrations">Integrations</TabsTrigger>
+            <TabsTrigger value="import">Import</TabsTrigger>
             <TabsTrigger value="migration">Migration</TabsTrigger>
           </TabsList>
           <TabsContent value="users"><UsersTab /></TabsContent>
@@ -31,6 +33,7 @@ export default function AdminPage() {
           <TabsContent value="alerts"><AlertRulesTab /></TabsContent>
           <TabsContent value="playbooks"><PlaybooksTab /></TabsContent>
           <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
+          <TabsContent value="import"><ImportWizard /></TabsContent>
           <TabsContent value="migration"><MigrationTab /></TabsContent>
         </Tabs>
       </PageBody>

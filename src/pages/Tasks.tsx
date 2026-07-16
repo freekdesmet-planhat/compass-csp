@@ -1,19 +1,19 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
-import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Tabs, TabsList, TabsTrigger, TabsContent, EmptyState, Progress, Dialog, DialogTrigger, DialogContent, DialogTitle, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui';
-import { useTasks, useVisibleCompanies, useToggleTask, useCreateTask } from '@/lib/hooks';
-import { useSession } from '@/lib/session';
+import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Tabs, TabsList, TabsTrigger, TabsContent, EmptyState, Progress } from '@/components/ui';
+import { useTasks, useVisibleCompanies, useToggleTask } from '@/lib/hooks';
+import { TaskModal } from '@/components/modals';
 import { fmtDate, daysUntil, cn } from '@/lib/utils';
 import { CheckSquare, Plus, ListChecks } from 'lucide-react';
 import type { Task } from '@/lib/types';
 
 export default function TasksPage() {
   const navigate = useNavigate();
-  const { profile } = useSession();
   const { data: companies = [] } = useVisibleCompanies();
   const { data: allTasks = [] } = useTasks();
   const [groupBy, setGroupBy] = useState<'company' | 'due'>('due');
+  const [newTask, setNewTask] = useState(false);
 
   const companyById = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
   const visibleIds = useMemo(() => new Set(companies.map((c) => c.id)), [companies]);
@@ -36,10 +36,11 @@ export default function TasksPage() {
               <button onClick={() => setGroupBy('due')} className={`rounded px-2 py-1 text-sm font-medium ${groupBy === 'due' ? 'bg-panel' : 'text-muted-foreground'}`}>By due</button>
               <button onClick={() => setGroupBy('company')} className={`rounded px-2 py-1 text-sm font-medium ${groupBy === 'company' ? 'bg-panel' : 'text-muted-foreground'}`}>By company</button>
             </div>
-            <NewTaskDialog companies={companies} defaultAssignee={profile.id} />
+            <Button size="sm" variant="primary" onClick={() => setNewTask(true)}><Plus className="h-3.5 w-3.5" /> New task</Button>
           </div>
         }
       />
+      <TaskModal open={newTask} onOpenChange={setNewTask} />
       <PageBody>
         <Tabs defaultValue="day">
           <TabsList className="mb-3">
@@ -121,27 +122,3 @@ function PlaybookProgress({ tasks, companyById }: { tasks: Task[]; companyById: 
   );
 }
 
-function NewTaskDialog({ companies, defaultAssignee }: { companies: { id: string; name: string }[]; defaultAssignee: string }) {
-  const create = useCreateTask();
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [companyId, setCompanyId] = useState(companies[0]?.id ?? '');
-  const [due, setDue] = useState('');
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button size="sm" variant="primary"><Plus className="h-3.5 w-3.5" /> New task</Button></DialogTrigger>
-      <DialogContent>
-        <DialogTitle className="text-md font-semibold">New task</DialogTitle>
-        <div className="mt-3 space-y-3">
-          <Input placeholder="Task title" value={title} onChange={(e) => setTitle(e.target.value)} />
-          <Select value={companyId} onValueChange={setCompanyId}>
-            <SelectTrigger className="w-full"><SelectValue placeholder="Company" /></SelectTrigger>
-            <SelectContent>{companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
-          </Select>
-          <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
-          <Button variant="primary" disabled={!title.trim() || !companyId} onClick={() => { create.mutate({ companyId, title, dueDate: due || null, assigneeId: defaultAssignee }); setTitle(''); setDue(''); setOpen(false); }}>Create</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}

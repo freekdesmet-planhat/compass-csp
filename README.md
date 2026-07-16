@@ -91,6 +91,7 @@ supabase secrets set \
   FATHOM_API_KEY=... FATHOM_WEBHOOK_SECRET=... \
   AIRCALL_API_ID=... AIRCALL_API_TOKEN=... AIRCALL_WEBHOOK_TOKEN=... \
   OUTREACH_CLIENT_ID=... OUTREACH_CLIENT_SECRET=... OUTREACH_REDIRECT_URI=... \
+  SLACK_BOT_TOKEN=xoxb-...   # optional — enables Slack mirror for notifications \
   ORG_EMAIL_DOMAIN=yourco.com ORG_TIMEZONE=Europe/Amsterdam \
   STORE_EMAIL_BODIES=false APP_URL=https://compass.yourco.com
 
@@ -139,11 +140,55 @@ SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npm run seed:demo
 Writes the same demo book to Postgres so a fresh live environment is explorable
 before real data lands.
 
-### 7. Netlify deploy
+### 7. Netlify deploy (frontend)
 
 `netlify.toml` is configured: build `npm run build`, publish `dist`, SPA redirect
-`/* → /index.html 200`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in
-Netlify environment variables. Everything else lives in Supabase secrets.
+`/* → /index.html 200`, and `NODE_VERSION` pinned to `20`. Set **only**
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Netlify environment variables.
+Everything else lives in Supabase secrets. **Netlify builds the SPA only** —
+migrations, Edge Functions and cron do NOT ship with a Netlify deploy.
+
+### 8. Supabase deploy (backend) — GitHub Action
+
+`.github/workflows/deploy-supabase.yml` closes the gap: on push to `main` touching
+`supabase/**` it links the project, runs `supabase db push`, then
+`supabase functions deploy`. A PR-triggered job runs `supabase db push --dry-run`
+so schema changes are visible in review. Add these **repository secrets**
+(Settings → Secrets and variables → Actions):
+
+- `SUPABASE_ACCESS_TOKEN` — a personal access token (Account → Access Tokens)
+- `SUPABASE_PROJECT_REF` — the project ref
+- `SUPABASE_DB_PASSWORD` — the database password
+
+### 9. Deploy previews (Google sign-in on PRs)
+
+In Supabase → **Authentication → URL Configuration**: set the production Netlify
+domain as **Site URL**, and add `https://*--<netlify-site-name>.netlify.app/**` to
+**Additional Redirect URLs** so Google sign-in works on every PR preview.
+
+### 10. Slack notifications (optional)
+
+The `notify` Edge Function mirrors in-app notifications to Slack DMs when
+`SLACK_BOT_TOKEN` is set (graceful no-op otherwise):
+
+1. Create a Slack app at <https://api.slack.com/apps> → **From scratch**.
+2. **OAuth & Permissions** → add bot token scopes `chat:write` and
+   `users:read.email`.
+3. **Install to Workspace** and approve.
+4. Copy the **Bot User OAuth Token** (`xoxb-…`).
+5. `supabase secrets set SLACK_BOT_TOKEN=xoxb-…`
+
+### 11. Branch workflow
+
+```
+git checkout -b v1.x
+# run the iteration prompt in Claude Code, implement, commit
+git push -u origin v1.x
+# open a PR → Netlify posts a deploy-preview URL; the Action posts the migration diff
+# test the preview against the acceptance table (below)
+# merge to main → Netlify ships the SPA, the Action ships Supabase
+git tag v1.1.0 && git push --tags   # npm run changelog:sync updates "What's new"
+```
 
 ---
 
@@ -186,5 +231,41 @@ Netlify environment variables. Everything else lives in Supabase secrets.
   passive between, and headline NPS = mean of scores.
 - **npm cache.** Local installs may need `--cache ./.npmcache` due to a root-owned
   `~/.npm` from a historical npm bug (see Quick start).
-- **Bundle size.** The SPA ships as a single chunk (~250 kB gzip). Route-level
+- **Bundle size.** The SPA ships as a single chunk (~300 kB gzip). Route-level
   code-splitting is a straightforward follow-up if needed.
+
+### V1.1
+
+- **Migration filenames.** New schema lives under `supabase/migrations/` with a
+  timestamped `_v1_1_` tag (e.g. `20260716120001_v1_1_schema.sql`) rather than a
+  bare `v1_1_` prefix, so the Supabase CLI's version ordering still works. Shipped
+  V1 migrations were not edited.
+- **CSV import parser.** The wizard uses a small built-in CSV parser (quotes /
+  embedded commas / newlines handled) instead of Papaparse, to avoid adding a
+  dependency given the local npm-cache caveat above. Swap in Papaparse if
+  preferred — the parse step is isolated.
+- **@mentions.** Note mentions use lightweight `@name` token matching against
+  active teammates (parsed on save → notification), not the full Tiptap Mention
+  popcorn extension. The notification + Slack-mirror pipeline is the spec's; the
+  in-editor picker is a follow-up.
+- **Ask Compass / dataset layer in demo.** In demo mode Ask Compass and the
+  Dashboards `ds_*` datasets run against the in-browser store, scoped to
+  `useVisibleCompanies()` (the RLS mirror) — so neither can surface another CSM's
+  account. In live mode they call the `ask-compass` Edge Function (hard-filtered by
+  the `visible_company_ids()` RPC) and the `ds_*` SECURITY INVOKER RPCs.
+- **Dashboards layout.** Widgets render in a responsive grid; `position` is
+  persisted but drag-to-arrange/resize is a follow-up.
+- **Scaled bulk-action bar.** Operates on the current filtered Portfolio view
+  (one-to-many motion) rather than individual row checkboxes, since the shared
+  DataTable has no selection column yet.
+- **News auto-refresh segment set.** The weekly `news-refresh` cron is scoped to
+  `enterprise` in `refresh_enterprise_news()`; widen the segment array there (or
+  wire it to a settings row) to change coverage. The Admin → Health config screen
+  documents the metric mapping alongside it.
+- **`seed-demo.ts` (live Postgres seed).** The zero-credential client demo store
+  generates full V1.1 data for every feature (products, whitespace, dashboards,
+  library, notifications, Ask threads, changelog — plus full-size 150/70 books).
+  Products + the changelog are also seeded into Postgres by the `v1_1_` seed
+  migration. Extending `seed-demo.ts` to also write the remaining V1.1 tables to a
+  live Postgres seed is a documented follow-up; it does not affect the demo/
+  acceptance surface.

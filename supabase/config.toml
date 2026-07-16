@@ -412,3 +412,13 @@ enabled = true
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# ── Edge Function overrides ──────────────────────────────────────────────────
+# External webhook senders cannot mint Supabase JWTs, so JWT verification is
+# disabled for them. Each function still enforces its own secret-header / token
+# check (see webhook-fathom: x-fathom-secret; webhook-aircall: body.token).
+[functions.webhook-fathom]
+verify_jwt = false
+
+[functions.webhook-aircall]
+verify_jwt = false

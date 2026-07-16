@@ -68,6 +68,7 @@ function TimelineRow({ a }: { a: Activity }) {
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{a.title}</span>
             {a.direction && <Chip>{a.direction}</Chip>}
+            {!!a.meta.logged_manually && <Chip tone="neutral">logged manually</Chip>}
           </div>
           {a.snippet && <div className="truncate text-sm text-muted-foreground">{a.snippet}</div>}
         </div>

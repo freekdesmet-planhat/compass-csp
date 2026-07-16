@@ -1,11 +1,21 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
-import { Card, CardHeader, CardTitle, CardBody, Chip, EmptyState } from '@/components/ui';
+import { Card, CardHeader, CardTitle, CardBody, Chip, EmptyState, Button } from '@/components/ui';
 import { useNps, useCsat, useVisibleCompanies, useContacts } from '@/lib/hooks';
+import { NpsModal } from '@/components/modals';
 import { fmtDate } from '@/lib/utils';
 import { LineChart, Line, ResponsiveContainer, YAxis, XAxis, Tooltip as RTooltip } from 'recharts';
-import { Gauge } from 'lucide-react';
+import { Gauge, Plus } from 'lucide-react';
+
+// ROOT CAUSE (A2 / acceptance #3): the empty NPS page in the live tenant was
+// NOT a UI bug — this page queries nps_responses joined to visible companies and
+// renders fine. The migration's step-8 `GET /nps` mapping wrote responses with a
+// company reference that didn't resolve (Planhat returns the response keyed by
+// its own contact/company ids, which must be remapped to Compass ids via
+// source_id). With the mapping fixed, and the idempotent `--only=nps` backfill in
+// scripts/migrate-planhat.ts, migrated responses now land. Demo mode always had
+// data. A proper page-level empty state + manual "Log NPS response" cover the gap.
 
 // NOTE on scale: in this dataset an NPS response `score` is stored on a
 // -100..100 point scale (Planhat-style relative NPS), not raw 0–10. So we
@@ -57,10 +67,17 @@ export default function NpsPage() {
     return [...map.entries()].map(([seg, s]) => ({ seg, nps: Math.round(s.reduce((a, b) => a + b, 0) / s.length), n: s.length }));
   }, [nps, companyById]);
 
+  const [logOpen, setLogOpen] = useState(false);
+
   return (
     <div>
-      <PageHeader title="NPS & CSAT" subtitle={`${nps.length} NPS responses · ${csat.length} CSAT`} />
+      <PageHeader title="NPS & CSAT" subtitle={`${nps.length} NPS responses · ${csat.length} CSAT`}
+        actions={<Button variant="primary" onClick={() => setLogOpen(true)}><Plus className="h-3.5 w-3.5" /> Log NPS response</Button>} />
+      <NpsModal open={logOpen} onOpenChange={setLogOpen} />
       <PageBody>
+        {nps.length === 0 && csat.length === 0 && (
+          <EmptyState icon={Gauge} title="No NPS or CSAT responses yet" hint="Responses sync from Planhat/surveys, or log one manually." action={<Button variant="primary" onClick={() => setLogOpen(true)}>Log NPS response</Button>} />
+        )}
         <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
           <Stat label="NPS" value={String(headlineNps)} />
           <Stat label="Promoters" value={String(promoters)} tone="green" />
