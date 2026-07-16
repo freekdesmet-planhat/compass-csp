@@ -49,6 +49,10 @@ const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+// --only=<step> targets a single backfill without a full re-migration (V1.1).
+// Supported: nps | news-backfill | whitespace  (each is idempotent).
+const ONLY = (process.argv.find((a) => a.startsWith('--only='))?.split('=')[1] ?? process.env.MIGRATE_ONLY ?? '').trim();
+
 // ── small utilities ────────────────────────────────────────────────────────
 const DAY_MS = 86_400_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1043,7 +1047,74 @@ function printReport() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// V1.1 targeted backfills (run via --only). Map Compass company by source_id.
+// ════════════════════════════════════════════════════════════════════════════
+async function compassCompanyIdBySourceId(): Promise<Map<string, string>> {
+  const { data } = await sb.from('companies').select('id, source_id').eq('source', 'planhat');
+  return new Map((data ?? []).filter((c: Rec) => c.source_id).map((c: Rec) => [String(c.source_id), c.id as string]));
+}
+
+// Latest news from Planhat custom field "(AI) Latest News" → companies.latest_news.
+async function stepNewsBackfill() {
+  console.log('▶ [news-backfill] pulling (AI) Latest News from Planhat custom fields…');
+  const companies = await planhatGet('/companies');
+  const byId = await compassCompanyIdBySourceId();
+  let updated = 0;
+  for (const co of companies) {
+    const custom: Rec = co.custom ?? {};
+    const news = custom['(AI) Latest News'] ?? custom['AI Latest News'] ?? null;
+    const compassId = byId.get(String(co._id));
+    if (!news || !compassId) continue;
+    await sb.from('companies').update({
+      latest_news: String(news),
+      latest_news_at: new Date().toISOString(),
+      latest_news_sources: [],
+    }).eq('id', compassId);
+    updated++;
+  }
+  console.log(`   updated latest_news on ${updated} companies`);
+}
+
+// Product statuses from Planhat custom fields of the same names → company_products.
+async function stepWhitespace() {
+  console.log('▶ [whitespace] backfilling company_products from Planhat product fields…');
+  const VALUE_MAP: Record<string, string> = { 'Current Product': 'current', 'Active Opp': 'active_opp', 'Need To Discuss': 'need_to_discuss', 'Rejected': 'rejected' };
+  const PRODUCT_NAMES = ['Core Licence', 'SEO Intelligence', 'Traffic Monitor', 'Conversion Optimiser', 'Consulting Services', 'SEO Consulting'];
+  const { data: products } = await sb.from('products').select('id, name');
+  const productByName = new Map((products ?? []).map((p: Rec) => [p.name as string, p.id as string]));
+  const byId = await compassCompanyIdBySourceId();
+  const companies = await planhatGet('/companies');
+  let rows = 0;
+  for (const co of companies) {
+    const compassId = byId.get(String(co._id));
+    if (!compassId) continue;
+    const custom: Rec = co.custom ?? {};
+    for (const name of PRODUCT_NAMES) {
+      const raw = custom[name];
+      const productId = productByName.get(name);
+      if (!raw || !productId) continue;
+      const status = VALUE_MAP[String(raw)] ?? 'none';
+      await sb.from('company_products').upsert(
+        { company_id: compassId, product_id: productId, status },
+        { onConflict: 'company_id,product_id' }
+      );
+      rows++;
+    }
+  }
+  console.log(`   upserted ${rows} company_products rows`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 async function main() {
+  if (ONLY) {
+    console.log(`▶ Planhat → Compass migration (only: ${ONLY})…\n`);
+    if (ONLY === 'nps') await step8Nps();
+    else if (ONLY === 'news-backfill') await stepNewsBackfill();
+    else if (ONLY === 'whitespace') await stepWhitespace();
+    else { console.error(`✖ Unknown --only step "${ONLY}". Use: nps | news-backfill | whitespace`); process.exit(1); }
+    console.log('\n✔ Targeted backfill complete (idempotent — re-run any time).');
+    return;
+  }
   console.log('▶ Planhat → Compass migration starting…\n');
   await step1Users();
   await step2Companies();

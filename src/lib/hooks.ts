@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { all, update, insert, newId, getDb } from './store';
+import { all, update, insert, remove, newId, getDb } from './store';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS } from './segments';
@@ -7,6 +7,8 @@ import type {
   Company, Contact, Activity, Deal, Task, Alert, HealthSnapshot, SuccessPlan,
   SuccessPlanObjective, NpsResponse, CsatResponse, Ticket, UsageMetric, CalendarEvent,
   MeetingPrep, Digest, EmailMessage, Note, Profile,
+  Notification, Product, CompanyProduct, CompanyProductStatus, LibraryItem, Dashboard,
+  DashboardWidget, AskThread, AskMessage, ChangelogEntry,
 } from './types';
 
 // Visibility: which owner ids the current profile can see companies for.
@@ -125,6 +127,18 @@ export function useObjectives(companyId?: string, planId?: string) {
 export function useNps(companyId?: string) {
   return useQuery({ queryKey: ['nps', companyId], queryFn: () => (all('npsResponses') as NpsResponse[]).filter((n) => !companyId || n.companyId === companyId) });
 }
+export function useCreateNps() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  return useMutation({
+    mutationFn: async (n: { companyId: string; score: number; comment?: string; contactId?: string | null }) => {
+      const row = insert('npsResponses', { id: newId('nps'), companyId: n.companyId, contactId: n.contactId ?? null, score: n.score, comment: n.comment ?? null, respondedAt: new Date().toISOString() } as NpsResponse);
+      insert('activities', { id: newId('ac'), companyId: n.companyId, contactIds: n.contactId ? [n.contactId] : [], userId: profile.id, type: 'nps', title: `NPS ${n.score}`, snippet: n.comment ?? '', occurredAt: new Date().toISOString(), meta: { sentiment: n.score / 100, logged_manually: true } } as Activity);
+      return row;
+    },
+    onSuccess: (_r, v) => { qc.invalidateQueries({ queryKey: ['nps'] }); qc.invalidateQueries({ queryKey: ['activities', v.companyId] }); },
+  });
+}
 export function useCsat(companyId?: string) {
   return useQuery({ queryKey: ['csat', companyId], queryFn: () => (all('csatResponses') as CsatResponse[]).filter((n) => !companyId || n.companyId === companyId) });
 }
@@ -237,14 +251,27 @@ export function useCreateTask() {
   const qc = useQueryClient();
   const { profile } = useSession();
   return useMutation({
-    mutationFn: async (t: Partial<Task> & { companyId: string; title: string }) =>
-      insert('tasks', {
-        id: newId('ts'), companyId: t.companyId, assigneeId: t.assigneeId ?? profile.id, creatorId: profile.id,
-        title: t.title, description: t.description ?? null, dueDate: t.dueDate ?? null, completedAt: null,
+    mutationFn: async (t: Partial<Task> & { companyId: string; title: string }) => {
+      const assigneeId = t.assigneeId ?? profile.id;
+      const row = insert('tasks', {
+        id: newId('ts'), companyId: t.companyId, assigneeId, creatorId: profile.id,
+        title: t.title, description: t.description ?? null, taskType: t.taskType ?? 'todo',
+        dueDate: t.dueDate ?? null, completedAt: null,
         priority: t.priority ?? 'normal', origin: t.origin ?? 'manual', sourceActivityId: t.sourceActivityId ?? null,
-        successPlanObjectiveId: t.successPlanObjectiveId ?? null,
-      } as Task),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+        successPlanObjectiveId: t.successPlanObjectiveId ?? null, contactId: t.contactId ?? null,
+      } as Task);
+      // Assigning to someone else creates a notification (B5 + D6).
+      if (assigneeId !== profile.id) {
+        const company = (all('companies') as Company[]).find((c) => c.id === t.companyId);
+        insert('notifications', {
+          id: newId('ntf'), userId: assigneeId, kind: 'task_assigned',
+          title: 'New task assigned', body: `${profile.fullName} assigned you "${t.title}"${company ? ` on ${company.name}` : ''}.`,
+          link: `/company/${t.companyId}?tab=tasks`, readAt: null, createdAt: new Date().toISOString(),
+        } as Notification);
+      }
+      return row;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tasks'] }); qc.invalidateQueries({ queryKey: ['notifications'] }); },
   });
 }
 
@@ -283,20 +310,280 @@ export function useUpdateDeal() {
 
 export function useUpdateObjective() {
   const qc = useQueryClient();
+  const { profile } = useSession();
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<SuccessPlanObjective> }) => {
+      const before = (all('objectives') as SuccessPlanObjective[]).find((x) => x.id === id);
       const o = update('objectives', id, patch);
       // recompute plan progress from objective statuses
       if (o) {
         const objs = (all('objectives') as SuccessPlanObjective[]).filter((x) => x.planId === o.planId);
         const score = objs.reduce((a, x) => a + (x.status === 'achieved' ? 1 : x.status === 'on_track' ? 0.5 : x.status === 'at_risk' ? 0.25 : 0), 0);
         update('successPlans', o.planId, { progressPct: Math.round((score / (objs.length || 1)) * 100) });
+        // Timeline system activity on status change (V1 spec).
+        if (patch.status && before && before.status !== patch.status) {
+          insert('activities', {
+            id: newId('ac'), companyId: o.companyId, contactIds: [], userId: profile.id, type: 'system',
+            title: `Objective "${o.title}" → ${patch.status.replace(/_/g, ' ')}`, snippet: `Status changed by ${profile.fullName}`,
+            occurredAt: new Date().toISOString(), meta: {},
+          } as Activity);
+        }
       }
       return o;
     },
-    onSuccess: () => {
+    onSuccess: (o) => {
       qc.invalidateQueries({ queryKey: ['objectives'] });
       qc.invalidateQueries({ queryKey: ['successPlans'] });
+      if (o) qc.invalidateQueries({ queryKey: ['activities', o.companyId] });
     },
+  });
+}
+
+// ── V1.1 hooks ────────────────────────────────────────────────────────────────
+
+// Success plans: create + status edit (A5)
+export function useCreateSuccessPlan() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  return useMutation({
+    mutationFn: async (p: { companyId: string; name: string; ownerId?: string; targetDate?: string | null; objectives?: string[] }) => {
+      const planId = newId('sp');
+      const plan = insert('successPlans', {
+        id: planId, companyId: p.companyId, name: p.name, ownerId: p.ownerId ?? profile.id,
+        status: 'active', targetDate: p.targetDate ?? null, progressPct: 0,
+      } as SuccessPlan);
+      (p.objectives ?? []).filter((t) => t.trim()).forEach((title, i) =>
+        insert('objectives', {
+          id: newId('ob'), planId, companyId: p.companyId, title, businessOutcome: null, metric: null,
+          targetDate: p.targetDate ?? null, status: 'not_started', position: i, notes: null,
+        } as SuccessPlanObjective));
+      insert('activities', {
+        id: newId('ac'), companyId: p.companyId, contactIds: [], userId: profile.id, type: 'system',
+        title: `Success plan "${p.name}" created`, snippet: `by ${profile.fullName}`, occurredAt: new Date().toISOString(), meta: {},
+      } as Activity);
+      return plan;
+    },
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ['successPlans'] });
+      qc.invalidateQueries({ queryKey: ['objectives'] });
+      qc.invalidateQueries({ queryKey: ['activities', v.companyId] });
+    },
+  });
+}
+
+export function useUpdateSuccessPlan() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  return useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<SuccessPlan> }) => {
+      const before = (all('successPlans') as SuccessPlan[]).find((p) => p.id === id);
+      const p = update('successPlans', id, patch);
+      if (p && patch.status && before && before.status !== patch.status) {
+        insert('activities', {
+          id: newId('ac'), companyId: p.companyId, contactIds: [], userId: profile.id, type: 'system',
+          title: `Success plan "${p.name}" → ${patch.status}`, snippet: `Status changed by ${profile.fullName}`,
+          occurredAt: new Date().toISOString(), meta: {},
+        } as Activity);
+      }
+      return p;
+    },
+    onSuccess: (p) => {
+      qc.invalidateQueries({ queryKey: ['successPlans'] });
+      if (p) qc.invalidateQueries({ queryKey: ['activities', p.companyId] });
+    },
+  });
+}
+
+// Contacts inline edit (B4) → optional health recompute
+export function useUpdateContact() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Contact> }) => update('contacts', id, patch),
+    onSuccess: (c) => {
+      qc.invalidateQueries({ queryKey: ['contacts'] });
+      if (c) qc.invalidateQueries({ queryKey: ['contact', c.id] });
+    },
+  });
+}
+
+export function useContact(id: string | undefined) {
+  return useQuery({
+    queryKey: ['contact', id],
+    enabled: !!id,
+    queryFn: () => (all('contacts') as Contact[]).find((c) => c.id === id) ?? null,
+  });
+}
+
+// Products & whitespace (C5)
+export function useProducts() {
+  return useQuery({ queryKey: ['products'], queryFn: () => all('products') as Product[] });
+}
+export function useCompanyProducts(companyId?: string) {
+  return useQuery({
+    queryKey: ['companyProducts', companyId],
+    queryFn: () => (all('companyProducts') as CompanyProduct[]).filter((cp) => !companyId || cp.companyId === companyId),
+  });
+}
+export function useUpsertCompanyProduct() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  return useMutation({
+    mutationFn: async ({ companyId, productId, status, arr }: { companyId: string; productId: string; status: CompanyProductStatus; arr?: number | null }) => {
+      const existing = (all('companyProducts') as CompanyProduct[]).find((cp) => cp.companyId === companyId && cp.productId === productId);
+      if (existing) return update('companyProducts', existing.id, { status, arr: arr ?? existing.arr, updatedBy: profile.id });
+      return insert('companyProducts', { id: newId('cp'), companyId, productId, status, arr: arr ?? null, note: null, updatedBy: profile.id } as CompanyProduct);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['companyProducts'] }),
+  });
+}
+export function useCreateDeal() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  return useMutation({
+    mutationFn: async (d: Partial<Deal> & { companyId: string; name: string }) =>
+      insert('deals', {
+        id: newId('dl'), companyId: d.companyId, hubspotDealId: null, pipeline: d.pipeline ?? 'expansion',
+        stage: d.stage ?? 'Discovery', stageProbability: 0.3, forecastCategory: 'pipeline',
+        name: d.name, amount: d.amount ?? null, currency: 'USD', closeDate: d.closeDate ?? null,
+        ownerId: profile.id, status: 'open', nextSteps: null, aiSummary: null, confidence: 40,
+        qualification: {}, suggestedStage: null, suggestedStageReason: null, contactIds: [], lastSyncedAt: null,
+      } as Deal),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['deals'] }),
+  });
+}
+
+// Notifications (D6)
+export function useNotifications() {
+  const { profile } = useSession();
+  return useQuery({
+    queryKey: ['notifications', profile.id],
+    queryFn: () => (all('notifications') as Notification[]).filter((n) => n.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+  });
+}
+export function useMarkNotificationsRead() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  return useMutation({
+    mutationFn: async (id?: string) => {
+      const rows = (all('notifications') as Notification[]).filter((n) => n.userId === profile.id && !n.readAt && (!id || n.id === id));
+      rows.forEach((n) => update('notifications', n.id, { readAt: new Date().toISOString() }));
+      return rows.length;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+}
+export function useCreateNotification() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (n: { userId: string; kind: Notification['kind']; title: string; body?: string; link?: string }) =>
+      insert('notifications', { id: newId('ntf'), userId: n.userId, kind: n.kind, title: n.title, body: n.body ?? null, link: n.link ?? null, readAt: null, createdAt: new Date().toISOString() } as Notification),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  });
+}
+
+// Library (D4)
+export function useLibraryItems() {
+  return useQuery({ queryKey: ['library'], queryFn: () => all('libraryItems') as LibraryItem[] });
+}
+export function useLibraryMutations() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  const create = useMutation({
+    mutationFn: async (it: Partial<LibraryItem> & { title: string; itemType: LibraryItem['itemType'] }) =>
+      insert('libraryItems', { id: newId('lib'), title: it.title, description: it.description ?? null, itemType: it.itemType, url: it.url ?? null, storagePath: it.storagePath ?? null, tags: it.tags ?? [], segments: it.segments ?? [], uploadedBy: profile.id, downloadCount: 0, createdAt: new Date().toISOString() } as LibraryItem),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  });
+  const incrementDownload = useMutation({
+    mutationFn: async (id: string) => { const it = (all('libraryItems') as LibraryItem[]).find((x) => x.id === id); return update('libraryItems', id, { downloadCount: (it?.downloadCount ?? 0) + 1 }); },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
+  });
+  return { create, incrementDownload };
+}
+
+// Dashboards (D2)
+export function useDashboards() {
+  const { profile, allProfiles } = useSession();
+  return useQuery({
+    queryKey: ['dashboards', profile.id],
+    queryFn: () => {
+      const teamIds = new Set(allProfiles.filter((p) => p.managerId === profile.id).map((p) => p.id));
+      return (all('dashboards') as Dashboard[]).filter((d) =>
+        d.ownerId === profile.id || profile.role === 'admin' || (d.shared && (d.ownerId != null && teamIds.has(d.ownerId))) || (d.shared && d.ownerId === profile.id));
+    },
+  });
+}
+export function useDashboardWidgets(dashboardId?: string) {
+  return useQuery({
+    queryKey: ['dashboardWidgets', dashboardId],
+    queryFn: () => (all('dashboardWidgets') as DashboardWidget[]).filter((w) => !dashboardId || w.dashboardId === dashboardId),
+  });
+}
+export function useDashboardMutations() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  const createDashboard = useMutation({
+    mutationFn: async (name: string) => insert('dashboards', { id: newId('dash'), name, ownerId: profile.id, shared: false, layout: null } as Dashboard),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboards'] }),
+  });
+  const updateDashboard = useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Dashboard> }) => update('dashboards', id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboards'] }),
+  });
+  const addWidget = useMutation({
+    mutationFn: async (w: Partial<DashboardWidget> & { dashboardId: string; kind: DashboardWidget['kind']; dataset: string; title: string }) =>
+      insert('dashboardWidgets', { id: newId('dw'), dashboardId: w.dashboardId, position: w.position ?? { x: 0, y: 0, w: 2, h: 2 }, kind: w.kind, dataset: w.dataset, groupBy: w.groupBy ?? null, measure: w.measure ?? 'count', filter: w.filter ?? {}, title: w.title } as DashboardWidget),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboardWidgets'] }),
+  });
+  const removeWidget = useMutation({
+    mutationFn: async (id: string) => { remove('dashboardWidgets', id); return id; },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboardWidgets'] }),
+  });
+  return { createDashboard, updateDashboard, addWidget, removeWidget };
+}
+
+// Ask Compass (D1)
+export function useAskThreads() {
+  const { profile } = useSession();
+  return useQuery({
+    queryKey: ['askThreads', profile.id],
+    queryFn: () => (all('askThreads') as AskThread[]).filter((t) => t.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+  });
+}
+export function useAskMessages(threadId?: string) {
+  return useQuery({
+    queryKey: ['askMessages', threadId],
+    queryFn: () => (all('askMessages') as AskMessage[]).filter((m) => m.threadId === threadId).sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)),
+  });
+}
+
+export function useAskSend() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  return useMutation({
+    mutationFn: async ({ threadId, message, answer, toolCalls }: { threadId?: string; message: string; answer: string; toolCalls?: { name: string }[] }) => {
+      let tid = threadId;
+      if (!tid) {
+        tid = newId('akt');
+        insert('askThreads', { id: tid, userId: profile.id, title: message.split(' ').slice(0, 6).join(' '), createdAt: new Date().toISOString() } as AskThread);
+      }
+      insert('askMessages', { id: newId('akm'), threadId: tid, role: 'user', content: message, createdAt: new Date().toISOString() } as AskMessage);
+      insert('askMessages', { id: newId('akm'), threadId: tid, role: 'assistant', content: answer, toolCalls: toolCalls ?? null, createdAt: new Date().toISOString() } as AskMessage);
+      return tid;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['askThreads'] }); qc.invalidateQueries({ queryKey: ['askMessages'] }); },
+  });
+}
+
+// Changelog (D7)
+export function useChangelog() {
+  return useQuery({ queryKey: ['changelog'], queryFn: () => (all('changelog') as ChangelogEntry[]).slice().sort((a, b) => a.position - b.position) });
+}
+
+// Update the current profile (sidebar collapse, last_seen_version)
+export function useUpdateProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Profile> }) => update('profiles', id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
   });
 }

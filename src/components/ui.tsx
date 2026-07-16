@@ -106,7 +106,7 @@ export const DialogTrigger = DialogPrimitive.Trigger;
 export function DialogContent({ className, children, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/20 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=open]:fade-in" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in motion-reduce:transition-none motion-reduce:animate-none" />
       <DialogPrimitive.Content
         className={cn('fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-white p-4 shadow-popover focus:outline-none', className)}
         {...props}
@@ -127,7 +127,7 @@ export function Sheet({ open, onOpenChange, children }: { open: boolean; onOpenC
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/20" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm motion-reduce:transition-none" />
         <DialogPrimitive.Content className="fixed right-0 top-0 z-50 h-full w-[440px] max-w-[92vw] border-l bg-white shadow-popover focus:outline-none data-[state=open]:animate-in data-[state=open]:slide-in-from-right">
           {children}
         </DialogPrimitive.Content>

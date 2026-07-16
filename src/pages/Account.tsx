@@ -1,33 +1,42 @@
 import { useState } from 'react';
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
 import {
-  Button, Chip, HealthChip, HealthDot, SegmentBadge, Tabs, TabsList, TabsTrigger, TabsContent,
-  Card, CardHeader, CardTitle, CardBody, Avatar, EmptyState,
+  Button, Chip, HealthChip, SegmentBadge, Tabs, TabsList, TabsTrigger, TabsContent,
+  Card, CardHeader, CardTitle, CardBody, Avatar, EmptyState, Select, SelectTrigger, SelectValue,
+  SelectContent, SelectItem, Input, Textarea, Dialog, DialogContent, DialogTitle,
 } from '@/components/ui';
+import { cn } from '@/lib/utils';
 import {
   useCompany, useContacts, useActivities, useDeals, useTasks, useNps, useEmails,
-  useCalendarEvents, useSuccessPlans, useObjectives,
+  useCalendarEvents, useSuccessPlans, useObjectives, useToggleTask, useCreateSuccessPlan,
+  useUpdateSuccessPlan, useUpdateObjective,
 } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
+import { useToast } from '@/components/toast';
 import { fmtCurrency, fmtDate, relativeTime, daysUntil } from '@/lib/utils';
-import { StickyNote, CheckSquare, Mail, CalendarPlus, ArrowLeft } from 'lucide-react';
+import { StickyNote, CheckSquare, Mail, CalendarPlus, ArrowLeft, Plus, Check } from 'lucide-react';
 import { HealthTab } from './account/HealthTab';
 import { OverviewTab } from './account/OverviewTab';
 import { TimelineTab } from './account/TimelineTab';
 import { ContactsTab } from './account/ContactsTab';
 import { DealsTab } from './account/DealsTab';
+import { UsageTab } from './account/UsageTab';
 import { Composer } from './account/Composer';
-import { DataTable } from '@/components/DataTable';
+import { TaskModal, LogInteractionModal, TASK_TYPE_META } from '@/components/modals';
+import { WebsiteLink } from '@/components/WebsiteLink';
+import type { Contact, ObjectiveStatus } from '@/lib/types';
 
-const TABS = ['overview', 'health', 'timeline', 'success-plan', 'deals', 'contacts', 'emails', 'meetings', 'tasks', 'notes', 'nps'] as const;
+const TABS = ['overview', 'health', 'usage', 'timeline', 'success-plan', 'deals', 'contacts', 'emails', 'meetings', 'tasks', 'notes', 'nps'] as const;
 
 export default function AccountPage() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const { profile, allProfiles } = useSession();
+  const { allProfiles } = useSession();
   const { data: company, isLoading } = useCompany(id);
+  const [taskModal, setTaskModal] = useState(false);
+  const [logModal, setLogModal] = useState(false);
   const tab = params.get('tab') ?? 'overview';
 
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
@@ -49,12 +58,13 @@ export default function AccountPage() {
           <Meta label="Phase" value={company.phase?.replace(/_/g, ' ') ?? '—'} />
           <div className="flex items-center gap-1.5"><Avatar name={owner?.fullName} className="h-5 w-5 text-[10px]" /><span className="text-muted-foreground">{owner?.fullName}</span></div>
           <SegmentBadge segment={company.segment} />
+          {company.website && <WebsiteLink url={company.website} />}
           {company.status === 'churned' && <Chip tone="red">churned</Chip>}
           <div className="ml-auto flex items-center gap-1.5">
             <QuickAction icon={StickyNote} label="Note" onClick={() => setParams({ tab: 'overview', compose: 'note' })} />
-            <QuickAction icon={CheckSquare} label="Task" onClick={() => setParams({ tab: 'overview', compose: 'task' })} />
+            <QuickAction icon={CheckSquare} label="Task" onClick={() => setTaskModal(true)} />
             <QuickAction icon={Mail} label="Email" onClick={() => setParams({ tab: 'overview', compose: 'email' })} />
-            <QuickAction icon={CalendarPlus} label="Meeting" onClick={() => setParams({ tab: 'meetings' })} />
+            <QuickAction icon={CalendarPlus} label="Meeting" onClick={() => setLogModal(true)} />
           </div>
         </div>
       </PageHeader>
@@ -67,6 +77,7 @@ export default function AccountPage() {
         <div className="px-6 py-4">
           <TabsContent value="overview"><OverviewTab company={company} /></TabsContent>
           <TabsContent value="health"><HealthTab company={company} /></TabsContent>
+          <TabsContent value="usage"><UsageTab company={company} /></TabsContent>
           <TabsContent value="timeline"><TimelineTab companyId={company.id} /></TabsContent>
           <TabsContent value="success-plan"><SuccessPlanTab companyId={company.id} /></TabsContent>
           <TabsContent value="deals"><DealsTab company={company} /></TabsContent>
@@ -78,6 +89,9 @@ export default function AccountPage() {
           <TabsContent value="nps"><NpsTab companyId={company.id} /></TabsContent>
         </div>
       </Tabs>
+
+      <TaskModal open={taskModal} onOpenChange={setTaskModal} companyId={company.id} />
+      <LogInteractionModal open={logModal} onOpenChange={setLogModal} companyId={company.id} defaultType="in_person" />
     </div>
   );
 }
@@ -89,33 +103,100 @@ function QuickAction({ icon: Icon, label, onClick }: { icon: React.ComponentType
   return <Button size="sm" variant="outline" onClick={onClick}><Icon className="h-3.5 w-3.5" /> {label}</Button>;
 }
 
-// ── Lightweight tabs kept inline ─────────────────────────────────────────────
+// ── Success plan tab (A5): create + editable plan/objective statuses ─────────
+const OBJ_STATUSES: ObjectiveStatus[] = ['not_started', 'on_track', 'at_risk', 'achieved', 'missed'];
+const objTone = (s: string): 'green' | 'accent' | 'amber' | 'red' | 'neutral' => (s === 'achieved' ? 'green' : s === 'on_track' ? 'accent' : s === 'at_risk' ? 'amber' : s === 'missed' ? 'red' : 'neutral');
+
 function SuccessPlanTab({ companyId }: { companyId: string }) {
   const { data: plans = [] } = useSuccessPlans(companyId);
   const { data: objectives = [] } = useObjectives(companyId);
-  if (!plans.length) return <EmptyState icon={CheckSquare} title="No success plan yet" hint="Create a plan to track objectives and business outcomes." />;
+  const updatePlan = useUpdateSuccessPlan();
+  const updateObjective = useUpdateObjective();
+  const [createOpen, setCreateOpen] = useState(false);
+
+  if (!plans.length) return (
+    <>
+      <EmptyState icon={CheckSquare} title="No success plan yet" hint="Create a plan to track objectives and business outcomes." action={<Button variant="primary" onClick={() => setCreateOpen(true)}><Plus className="h-3.5 w-3.5" /> New success plan</Button>} />
+      <NewSuccessPlanModal open={createOpen} onOpenChange={setCreateOpen} companyId={companyId} />
+    </>
+  );
   const plan = plans[0];
-  const toneFor = (s: string): 'green' | 'accent' | 'amber' | 'red' | 'neutral' => (s === 'achieved' ? 'green' : s === 'on_track' ? 'accent' : s === 'at_risk' ? 'amber' : s === 'missed' ? 'red' : 'neutral');
   return (
     <Card>
-      <CardHeader><CardTitle>{plan.name}</CardTitle><span className="text-sm text-muted-foreground">{plan.progressPct}% complete · target {fmtDate(plan.targetDate)}</span></CardHeader>
+      <CardHeader>
+        <CardTitle>{plan.name}</CardTitle>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">{plan.progressPct}% · target {fmtDate(plan.targetDate)}</span>
+          <Select value={plan.status} onValueChange={(v) => updatePlan.mutate({ id: plan.id, patch: { status: v } })}>
+            <SelectTrigger className="h-7"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="active">active</SelectItem><SelectItem value="paused">paused</SelectItem><SelectItem value="completed">completed</SelectItem></SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}><Plus className="h-3.5 w-3.5" /> New plan</Button>
+        </div>
+      </CardHeader>
       <CardBody className="space-y-2">
         {objectives.map((o) => (
           <div key={o.id} className="flex items-center gap-3 rounded-md border px-3 py-2">
-            <Chip tone={toneFor(o.status)}>{o.status.replace(/_/g, ' ')}</Chip>
+            <Chip tone={objTone(o.status)}>{o.status.replace(/_/g, ' ')}</Chip>
             <div className="flex-1"><div className="font-medium">{o.title}</div><div className="text-sm text-muted-foreground">{o.businessOutcome} · {o.metric}</div></div>
-            <span className="text-sm text-muted-foreground">{fmtDate(o.targetDate)}</span>
+            <Select value={o.status} onValueChange={(v) => updateObjective.mutate({ id: o.id, patch: { status: v as ObjectiveStatus } })}>
+              <SelectTrigger className="h-7 w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>{OBJ_STATUSES.map((s) => <SelectItem key={s} value={s}>{s.replace(/_/g, ' ')}</SelectItem>)}</SelectContent>
+            </Select>
           </div>
         ))}
       </CardBody>
+      <NewSuccessPlanModal open={createOpen} onOpenChange={setCreateOpen} companyId={companyId} />
     </Card>
+  );
+}
+
+function NewSuccessPlanModal({ open, onOpenChange, companyId }: { open: boolean; onOpenChange: (o: boolean) => void; companyId: string }) {
+  const { profile, allProfiles } = useSession();
+  const create = useCreateSuccessPlan();
+  const { toast } = useToast();
+  const [name, setName] = useState('Success Plan FY26');
+  const [owner, setOwner] = useState(profile.id);
+  const [targetDate, setTargetDate] = useState('');
+  const [objectives, setObjectives] = useState('');
+  const submit = async () => {
+    await create.mutateAsync({ companyId, name, ownerId: owner, targetDate: targetDate || null, objectives: objectives.split('\n') });
+    toast('Success plan created');
+    onOpenChange(false);
+    setObjectives('');
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogTitle className="text-md font-semibold">New success plan</DialogTitle>
+        <div className="mt-3 space-y-3">
+          <div><div className="mb-1 text-xs font-medium text-muted-foreground">Name</div><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><div className="mb-1 text-xs font-medium text-muted-foreground">Owner</div>
+              <Select value={owner} onValueChange={setOwner}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{allProfiles.filter((p) => p.isActive).map((p) => <SelectItem key={p.id} value={p.id}>{p.fullName}</SelectItem>)}</SelectContent></Select>
+            </div>
+            <div><div className="mb-1 text-xs font-medium text-muted-foreground">Target date</div><Input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} /></div>
+          </div>
+          <div><div className="mb-1 text-xs font-medium text-muted-foreground">First objectives (one per line, optional)</div><Textarea rows={3} value={objectives} onChange={(e) => setObjectives(e.target.value)} placeholder={'Achieve 80% seat activation\nLaunch executive dashboard'} /></div>
+          <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button><Button variant="primary" disabled={!name.trim()} onClick={submit}>Create plan</Button></div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function EmailsTab({ companyId }: { companyId: string }) {
   const { data: emails = [] } = useEmails(companyId);
+  const { data: contacts = [] } = useContacts(companyId);
+  const { allProfiles } = useSession();
   const [open, setOpen] = useState<string | null>(null);
   if (!emails.length) return <EmptyState icon={Mail} title="No emails" hint="Connect Gmail in Settings to see emails here." />;
+
+  const orgDomains = new Set(allProfiles.map((p) => p.email.split('@')[1]).filter(Boolean));
+  const byEmail = new Map<string, Contact>();
+  contacts.forEach((c) => { [c.email, ...(c.otherEmails ?? [])].filter(Boolean).forEach((e) => byEmail.set((e as string).toLowerCase(), c)); });
+
   return (
     <div className="space-y-1">
       {emails.map((e) => (
@@ -125,10 +206,37 @@ function EmailsTab({ companyId }: { companyId: string }) {
             <span className="flex-1 truncate font-medium">{e.subject}</span>
             <span className="text-sm text-muted-foreground">{relativeTime(e.sentAt)}</span>
           </button>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-3 py-1.5 text-xs">
+            <ParticipantLine label="From" addrs={e.fromEmail ? [e.fromEmail] : []} byEmail={byEmail} orgDomains={orgDomains} />
+            <ParticipantLine label="To" addrs={e.toEmails ?? []} byEmail={byEmail} orgDomains={orgDomains} />
+            {!!(e.ccEmails ?? []).length && <ParticipantLine label="Cc" addrs={e.ccEmails} byEmail={byEmail} orgDomains={orgDomains} />}
+          </div>
           {open === e.id && <div className="border-t px-3 py-2 text-base" dangerouslySetInnerHTML={{ __html: e.bodyHtml ?? `<p>${e.snippet}</p>` }} />}
         </div>
       ))}
     </div>
+  );
+}
+
+function ParticipantLine({ label, addrs, byEmail, orgDomains }: { label: string; addrs: string[]; byEmail: Map<string, Contact>; orgDomains: Set<string> }) {
+  const { toast } = useToast();
+  if (!addrs.length) return null;
+  return (
+    <span className="flex items-center gap-1">
+      <span className="text-muted-foreground">{label}:</span>
+      {addrs.map((addr, i) => {
+        const contact = byEmail.get(addr.toLowerCase());
+        const internal = orgDomains.has(addr.split('@')[1]);
+        if (contact) return <Link key={i} to={`/contacts/${contact.id}`}><Chip tone="accent">{contact.firstName} {contact.lastName}</Chip></Link>;
+        if (internal) return <Chip key={i} tone="neutral">{addr}</Chip>;
+        return (
+          <span key={i} className="group inline-flex items-center gap-1">
+            <span>{addr}</span>
+            <button className="opacity-0 transition-opacity group-hover:opacity-100 text-[var(--accent)]" onClick={() => toast(`Would add ${addr} as a contact`, { tone: 'info' })}>+ add</button>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -165,19 +273,50 @@ function MeetingsTab({ companyId }: { companyId: string }) {
 
 function TasksTab({ companyId }: { companyId: string }) {
   const { data: tasks = [] } = useTasks(companyId);
+  const toggle = useToggleTask();
+  const [taskModal, setTaskModal] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
+  const open = tasks.filter((t) => !t.completedAt);
+  const done = tasks.filter((t) => t.completedAt);
+
+  const Row = ({ t }: { t: (typeof tasks)[number] }) => {
+    const meta = TASK_TYPE_META[t.taskType] ?? TASK_TYPE_META.todo;
+    const Icon = meta.icon;
+    return (
+      <div className="flex items-center gap-3 border-b px-3 py-2 last:border-0 hover:bg-panel/60">
+        <button onClick={() => toggle.mutate(t)} className="shrink-0" aria-label={t.completedAt ? 'Mark incomplete' : 'Mark complete'}>
+          <span className={cn('flex h-4 w-4 items-center justify-center rounded border', t.completedAt ? 'border-[var(--green)] bg-[var(--green)] text-white' : 'border-[#d0d5dd]')}>
+            {t.completedAt && <Check className="h-3 w-3" />}
+          </span>
+        </button>
+        <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className={cn('flex-1', t.completedAt ? 'text-muted-foreground line-through' : 'font-medium')}>{t.title}</span>
+        <Chip>{t.origin.replace(/_/g, ' ')}</Chip>
+        <Chip tone={t.priority === 'high' ? 'red' : 'neutral'}>{t.priority}</Chip>
+        <span className="w-24 text-right text-sm text-muted-foreground">{fmtDate(t.dueDate)}</span>
+      </div>
+    );
+  };
+
   return (
-    <DataTable
-      rows={tasks}
-      rowKey={(t) => t.id}
-      empty={<EmptyState icon={CheckSquare} title="No tasks" />}
-      columns={[
-        { key: 'done', header: '', width: '4%', render: (t) => <HealthDot band={t.completedAt ? 'green' : null} /> },
-        { key: 'title', header: 'Task', render: (t) => <span className={t.completedAt ? 'text-muted-foreground line-through' : 'font-medium'}>{t.title}</span> },
-        { key: 'origin', header: 'Origin', width: '16%', render: (t) => <Chip>{t.origin.replace(/_/g, ' ')}</Chip> },
-        { key: 'priority', header: 'Priority', width: '12%', render: (t) => <Chip tone={t.priority === 'high' ? 'red' : 'neutral'}>{t.priority}</Chip> },
-        { key: 'due', header: 'Due', width: '16%', align: 'right', sortValue: (t) => t.dueDate, render: (t) => fmtDate(t.dueDate) },
-      ]}
-    />
+    <div className="space-y-3">
+      <div className="flex justify-end"><Button size="sm" variant="primary" onClick={() => setTaskModal(true)}><Plus className="h-3.5 w-3.5" /> New task</Button></div>
+      {open.length === 0 && done.length === 0 ? <EmptyState icon={CheckSquare} title="No tasks" action={<Button variant="primary" onClick={() => setTaskModal(true)}>New task</Button>} /> : (
+        <div className="rounded-lg border bg-white">
+          {open.map((t) => <Row key={t.id} t={t} />)}
+          {open.length === 0 && <div className="px-3 py-3 text-sm text-muted-foreground">No open tasks 🎉</div>}
+        </div>
+      )}
+      {done.length > 0 && (
+        <div>
+          <button onClick={() => setShowCompleted((s) => !s)} className="mb-1 text-sm text-muted-foreground hover:text-foreground">
+            {showCompleted ? '▾' : '▸'} Completed ({done.length})
+          </button>
+          {showCompleted && <div className="rounded-lg border bg-white">{done.map((t) => <Row key={t.id} t={t} />)}</div>}
+        </div>
+      )}
+      <TaskModal open={taskModal} onOpenChange={setTaskModal} companyId={companyId} />
+    </div>
   );
 }
 

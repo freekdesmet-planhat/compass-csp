@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Textarea, HealthDot } from '@/components/ui';
 import { Composer } from './Composer';
 import { TimelineTab } from './TimelineTab';
+import { WebsiteLink, DomainChips } from '@/components/WebsiteLink';
 import { useLatestSnapshot, useDeals, useSuccessPlans, useContacts, useUpdateCompany } from '@/lib/hooks';
 import { useToast } from '@/components/toast';
 import { HEALTH_DIMENSIONS, SEGMENT_PRESETS } from '@/lib/segments';
-import { fmtCurrency, fmtDate, daysUntil } from '@/lib/utils';
-import { Sparkles, Pencil } from 'lucide-react';
+import { fmtCurrency, fmtDate, daysUntil, relativeTime } from '@/lib/utils';
+import { Sparkles, Pencil, RefreshCw, Newspaper, ExternalLink } from 'lucide-react';
 import type { Company } from '@/lib/types';
 
 export function OverviewTab({ company }: { company: Company }) {
@@ -31,12 +32,15 @@ export function OverviewTab({ company }: { company: Company }) {
       {/* Right: attribute panel */}
       <div className="space-y-3">
         <Panel title="About">
-          <Kv k="Website" v={company.website ?? '—'} />
+          <div className="flex justify-between py-0.5 text-sm"><span className="text-muted-foreground">Website</span>{company.website ? <WebsiteLink url={company.website} /> : <span className="font-medium">—</span>}</div>
+          {company.domains?.length > 0 && <div className="flex justify-between py-0.5 text-sm"><span className="text-muted-foreground">Domains</span><DomainChips domains={company.domains} /></div>}
           <Kv k="Location" v={[company.city, company.country].filter(Boolean).join(', ') || '—'} />
           <Kv k="Region" v={company.region ?? '—'} />
           <Kv k="Tier" v={company.tier ?? '—'} />
           <Kv k="MRR" v={fmtCurrency(company.mrr)} />
         </Panel>
+
+        <LatestNewsCard company={company} />
 
         <Panel title="Health breakdown">
           {HEALTH_DIMENSIONS.map((d) => {
@@ -84,6 +88,53 @@ export function OverviewTab({ company }: { company: Company }) {
         <EditablePanel title="Path to green" companyId={company.id} field="pathToGreen" value={company.pathToGreen} />
       </div>
     </div>
+  );
+}
+
+// Latest company news (C2). Refresh calls the news-refresh Edge Function in live
+// mode; in demo it simulates a fresh web-search result.
+function LatestNewsCard({ company }: { company: Company }) {
+  const update = useUpdateCompany();
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const bullets = (company.latestNews ?? '').split('\n').filter((b) => b.trim());
+
+  const refresh = async () => {
+    setBusy(true);
+    // Live mode: POST /functions/v1/news-refresh { companyId }. Demo: simulate.
+    await new Promise((r) => setTimeout(r, 700));
+    const now = new Date().toISOString();
+    update.mutate({ id: company.id, patch: {
+      latestNews: `• ${company.name} published fresh product news this week — relevant to our roadmap.\n• Coverage of their market momentum and hiring.\n• A leadership update worth a mention in your next check-in.`,
+      latestNewsAt: now,
+      latestNewsSources: [{ title: 'Web search', url: `https://www.google.com/search?q=${encodeURIComponent(company.name + ' news')}` }],
+    } });
+    setBusy(false);
+    toast('News refreshed (live mode uses Anthropic web search)');
+  };
+
+  return (
+    <Card>
+      <CardHeader className="py-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm text-muted-foreground"><Newspaper className="h-3.5 w-3.5" /> Latest news</CardTitle>
+        <button onClick={refresh} disabled={busy} className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline disabled:opacity-50">
+          <RefreshCw className={`h-3 w-3 ${busy ? 'animate-spin' : ''}`} /> Refresh
+        </button>
+      </CardHeader>
+      <CardBody className="py-2.5">
+        {bullets.length ? (
+          <>
+            <ul className="space-y-1 text-sm">{bullets.map((b, i) => <li key={i}>{b.replace(/^•\s*/, '• ')}</li>)}</ul>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {company.latestNewsAt && <span>as of {fmtDate(company.latestNewsAt)} · {relativeTime(company.latestNewsAt)}</span>}
+              {(company.latestNewsSources ?? []).map((s, i) => (
+                <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-[var(--accent)] hover:underline">{s.title ?? 'source'}<ExternalLink className="h-3 w-3" /></a>
+              ))}
+            </div>
+          </>
+        ) : <div className="text-sm text-muted-foreground">No news yet. <button onClick={refresh} className="text-[var(--accent)] hover:underline">Refresh</button> to fetch recent developments.</div>}
+      </CardBody>
+    </Card>
   );
 }
 

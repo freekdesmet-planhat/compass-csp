@@ -8,6 +8,8 @@ import type {
   Profile, Company, Contact, Activity, Deal, HealthSnapshot, Task, Alert, AlertRule,
   SuccessPlan, SuccessPlanObjective, NpsResponse, CsatResponse, Ticket, UsageMetric,
   CalendarEvent, MeetingPrep, Digest, EmailMessage, Segment, ContactRole, HealthRecommendation,
+  Product, CompanyProduct, CompanyProductStatus, Notification, LibraryItem, Dashboard,
+  DashboardWidget, AskThread, AskMessage, ChangelogEntry, ImportRun,
 } from '../types';
 
 // ── seeded PRNG ──────────────────────────────────────────────────────────────
@@ -53,6 +55,16 @@ export interface DemoDataset {
   meetingPreps: MeetingPrep[];
   digests: Digest[];
   emails: EmailMessage[];
+  products: Product[];
+  companyProducts: CompanyProduct[];
+  notifications: Notification[];
+  libraryItems: LibraryItem[];
+  dashboards: Dashboard[];
+  dashboardWidgets: DashboardWidget[];
+  askThreads: AskThread[];
+  askMessages: AskMessage[];
+  changelog: ChangelogEntry[];
+  importRuns: ImportRun[];
 }
 
 const FIRST = ['Sarah', 'James', 'Maria', 'David', 'Lena', 'Tom', 'Priya', 'Marcus', 'Elena', 'Yuki', 'Omar', 'Anna', 'Kevin', 'Sofia', 'Liam', 'Noah', 'Emma', 'Ava', 'Raj', 'Chloe'];
@@ -83,6 +95,8 @@ export function generateDemoData(): DemoDataset {
     tasks: [], alerts: [], alertRules: [], successPlans: [], objectives: [], npsResponses: [],
     csatResponses: [], tickets: [], usageMetrics: [], calendarEvents: [], meetingPreps: [],
     digests: [], emails: [],
+    products: [], companyProducts: [], notifications: [], libraryItems: [], dashboards: [],
+    dashboardWidgets: [], askThreads: [], askMessages: [], changelog: [], importRuns: [],
   };
 
   // ── Profiles: admin, manager, 3 CSMs (one per segment) ────────────────────
@@ -93,10 +107,15 @@ export function generateDemoData(): DemoDataset {
   const csmEnt: Profile = { id: 'u_ent', email: 'ellis.ent@planhat.com', fullName: 'Ellis Fontaine', role: 'csm', segment: 'enterprise', managerId: manager.id, timezone: 'America/New_York', digestHour: 7, isActive: true };
   ds.profiles.push(admin, manager, csmScaled, csmMid, csmEnt);
 
+  // ── products catalogue (C5) ────────────────────────────────────────────────
+  ds.products = PRODUCTS.map((p, i) => ({ id: `prod_${i + 1}`, name: p.name, category: p.category, position: i + 1 }));
+
+  // Full-size books (D8): scaled 150, mid-touch 70, enterprise 12 — exercises
+  // pagination + performance honestly (no 10× scale-down).
   const books: { csm: Profile; segment: Segment; count: number }[] = [
-    { csm: csmScaled, segment: 'scaled', count: 15 },
-    { csm: csmMid, segment: 'mid_touch', count: 7 },
-    { csm: csmEnt, segment: 'enterprise', count: 3 },
+    { csm: csmScaled, segment: 'scaled', count: 150 },
+    { csm: csmMid, segment: 'mid_touch', count: 70 },
+    { csm: csmEnt, segment: 'enterprise', count: 12 },
   ];
 
   for (const book of books) {
@@ -108,8 +127,23 @@ export function generateDemoData(): DemoDataset {
 
   ds.alertRules = seedAlertRules();
   buildDigests(ds);
+  buildLibrary(ds);
+  buildDashboards(ds, [csmScaled, csmMid, csmEnt], manager);
+  buildAskCompass(ds, csmEnt);
+  buildNotifications(ds, [csmScaled, csmMid, csmEnt], manager);
+  ds.changelog = CHANGELOG_SEED;
   return ds;
 }
+
+// Products catalogue (C5) + whitespace status distribution.
+const PRODUCTS: { name: string; category: string }[] = [
+  { name: 'Core Licence', category: 'license' },
+  { name: 'SEO Intelligence', category: 'product' },
+  { name: 'Traffic Monitor', category: 'product' },
+  { name: 'Conversion Optimiser', category: 'product' },
+  { name: 'Consulting Services', category: 'services' },
+  { name: 'SEO Consulting', category: 'services' },
+];
 
 function buildCompany(
   ds: DemoDataset,
@@ -195,9 +229,28 @@ function buildCompany(
     aiRiskSummary: result.band === 'red' ? 'Elevated churn risk driven by support and engagement gaps.' : result.band === 'amber' ? 'Watch: mixed signals across engagement and usage.' : 'Low risk; steady engagement and healthy usage.',
     aiRenewalSummary: `Renewal ${renewalDays < 0 ? 'overdue' : `in ${renewalDays}d`}; ARR $${(arr / 1000).toFixed(0)}k.`,
     lastTouchAt: daysAgo(randInt(0, 70)), lastTouchType: pick(['email', 'meeting', 'call', 'note']), nextTouchAt: chance(0.6) ? daysAhead(randInt(1, 30)) : null,
+    latestNews: segment === 'enterprise' || chance(0.25)
+      ? `• ${name} announced a new ${pick(['funding round', 'product launch', 'executive hire', 'partnership', 'market expansion'])} — ${pick(['signals growth budget', 'aligns with our roadmap', 'expands their footprint'])}.\n• Reported ${pick(['strong quarterly results', 'a reorganisation', 'hiring across ops'])}.\n• Press coverage on their ${pick(['SEO strategy', 'analytics investment', 'digital transformation'])}.`
+      : null,
+    latestNewsAt: segment === 'enterprise' || chance(0.25) ? daysAgo(randInt(1, 20)) : null,
+    latestNewsSources: segment === 'enterprise' ? [{ title: 'TechCrunch', url: 'https://techcrunch.com/' }, { title: 'Company blog', url: `https://${domain}/blog` }] : null,
     source: 'planhat',
   };
   ds.companies.push(company);
+
+  // ── products & whitespace (C5) ─────────────────────────────────────────────
+  const statusPool: CompanyProductStatus[] = ['current', 'current', 'active_opp', 'need_to_discuss', 'rejected', 'none', 'none'];
+  ds.products.forEach((p, pi) => {
+    // Core Licence is always current for customers; others vary → real whitespace.
+    let cpStatus: CompanyProductStatus;
+    if (pi === 0) cpStatus = status !== 'churned' ? 'current' : 'rejected';
+    else cpStatus = segment === 'enterprise' ? pick(statusPool) : pick(['current', 'none', 'none', 'active_opp', 'need_to_discuss']);
+    ds.companyProducts.push({
+      id: uid('cp'), companyId, productId: p.id, status: cpStatus,
+      arr: cpStatus === 'current' ? Math.round(arr * (0.1 + rand() * 0.3)) : cpStatus === 'active_opp' ? Math.round(arr * (0.15 + rand() * 0.25)) : null,
+      note: null, updatedBy: owner.id,
+    });
+  });
 
   // ── usage metrics (weekly WAU + seats + adoption over 16 weeks) ────────────
   for (let w = 15; w >= 0; w--) {
@@ -325,9 +378,10 @@ function buildCompany(
     ds.tasks.push({
       id: uid('ts'), companyId, assigneeId: owner.id, creatorId: owner.id,
       title: pick(['Prep QBR deck', 'Send renewal proposal', 'Follow up on P1 ticket', 'Schedule exec sync', 'Update success plan', 'Review adoption metrics']),
-      description: null, dueDate: dateOnly(chance(0.5) ? daysAgo(randInt(0, 10)) : daysAhead(randInt(1, 21))),
+      description: null, taskType: pick(['todo', 'todo', 'email', 'call', 'check_in', 'meeting']),
+      dueDate: dateOnly(chance(0.5) ? daysAgo(randInt(0, 10)) : daysAhead(randInt(1, 21))),
       completedAt: completed ? daysAgo(randInt(0, 20)) : null, priority: pick(['low', 'normal', 'normal', 'high']),
-      origin: pick(['manual', 'manual', 'playbook', 'ai_call', 'ai_recommendation', 'alert']), sourceActivityId: null,
+      origin: pick(['manual', 'manual', 'playbook', 'ai_call', 'ai_recommendation', 'alert']), sourceActivityId: null, contactId: null,
     });
   }
 
@@ -427,3 +481,77 @@ function buildDigests(ds: DemoDataset) {
     });
   }
 }
+
+// ── V1.1 seed builders ──────────────────────────────────────────────────────
+function buildLibrary(ds: DemoDataset) {
+  const items: Omit<LibraryItem, 'id' | 'createdAt'>[] = [
+    { title: 'QBR deck template', description: 'Standard quarterly business review deck.', itemType: 'deck', url: null, storagePath: 'library/qbr-template.pptx', tags: ['qbr', 'template'], segments: ['enterprise', 'mid_touch'], uploadedBy: 'u_mgr', downloadCount: 42 },
+    { title: 'Onboarding one-pager', description: 'First-30-days plan for new customers.', itemType: 'doc', url: null, storagePath: 'library/onboarding.pdf', tags: ['onboarding'], segments: ['scaled', 'mid_touch'], uploadedBy: 'u_admin', downloadCount: 18 },
+    { title: 'Renewal email templates', description: 'T-60 / T-30 renewal sequences.', itemType: 'template', url: null, storagePath: 'library/renewal-emails.docx', tags: ['renewal', 'template'], segments: ['scaled'], uploadedBy: 'u_mgr', downloadCount: 63 },
+    { title: 'ROI calculator', description: 'Value model for expansion conversations.', itemType: 'link', url: 'https://sheets.example.com/roi', storagePath: null, tags: ['expansion', 'value'], segments: ['enterprise'], uploadedBy: 'u_ent', downloadCount: 9 },
+    { title: 'Executive value narrative', description: 'How to frame value for exec sponsors.', itemType: 'doc', url: null, storagePath: 'library/value-narrative.pdf', tags: ['value', 'exec'], segments: ['enterprise'], uploadedBy: 'u_admin', downloadCount: 27 },
+    { title: 'Product datasheet — SEO Intelligence', description: 'Latest SEO Intelligence one-pager.', itemType: 'link', url: 'https://planhat.com/seo-intelligence', storagePath: null, tags: ['product', 'seo'], segments: ['mid_touch', 'enterprise'], uploadedBy: 'u_mgr', downloadCount: 12 },
+  ];
+  items.forEach((it) => ds.libraryItems.push({ id: uid('lib'), createdAt: daysAgo(randInt(5, 90)), ...it }));
+}
+
+function buildDashboards(ds: DemoDataset, csms: Profile[], manager: Profile) {
+  // "My book at a glance" for each CSM + a shared "Renewal command centre" for the manager.
+  csms.forEach((csm) => {
+    const dashId = uid('dash');
+    ds.dashboards.push({ id: dashId, name: 'My book at a glance', ownerId: csm.id, shared: false, layout: null });
+    const widgets: Omit<DashboardWidget, 'id' | 'dashboardId'>[] = [
+      { position: { x: 0, y: 0, w: 1, h: 1 }, kind: 'metric', dataset: 'companies', groupBy: 'segment', measure: 'count', filter: {}, title: 'Accounts' },
+      { position: { x: 1, y: 0, w: 1, h: 1 }, kind: 'metric', dataset: 'companies', groupBy: 'segment', measure: 'sum_arr', filter: {}, title: 'Total ARR' },
+      { position: { x: 0, y: 1, w: 2, h: 2 }, kind: 'donut', dataset: 'companies', groupBy: 'healthBand', measure: 'count', filter: {}, title: 'Health distribution' },
+      { position: { x: 2, y: 0, w: 2, h: 2 }, kind: 'line', dataset: 'health_trend', groupBy: 'month', measure: 'avg_health', filter: {}, title: 'Health trend (12mo)' },
+      { position: { x: 0, y: 3, w: 4, h: 2 }, kind: 'bar', dataset: 'renewals', groupBy: 'quarter', measure: 'sum_arr', filter: {}, title: 'Renewal ARR by quarter' },
+    ];
+    widgets.forEach((w) => ds.dashboardWidgets.push({ id: uid('dw'), dashboardId: dashId, ...w }));
+  });
+
+  const mgrDash = uid('dash');
+  ds.dashboards.push({ id: mgrDash, name: 'Renewal command centre', ownerId: manager.id, shared: true, layout: null });
+  const mgrWidgets: Omit<DashboardWidget, 'id' | 'dashboardId'>[] = [
+    { position: { x: 0, y: 0, w: 2, h: 2 }, kind: 'bar', dataset: 'renewals', groupBy: 'stage', measure: 'sum_arr', filter: {}, title: 'Renewal pipeline by stage' },
+    { position: { x: 2, y: 0, w: 2, h: 2 }, kind: 'donut', dataset: 'companies', groupBy: 'healthBand', measure: 'sum_arr', filter: {}, title: 'ARR by health band' },
+    { position: { x: 0, y: 2, w: 2, h: 2 }, kind: 'bar', dataset: 'companies', groupBy: 'owner', measure: 'count', filter: {}, title: 'Accounts per CSM' },
+    { position: { x: 2, y: 2, w: 2, h: 2 }, kind: 'line', dataset: 'nps', groupBy: 'month', measure: 'avg', filter: {}, title: 'NPS trend' },
+  ];
+  mgrWidgets.forEach((w) => ds.dashboardWidgets.push({ id: uid('dw'), dashboardId: mgrDash, ...w }));
+}
+
+function buildAskCompass(ds: DemoDataset, csm: Profile) {
+  const threadId = uid('akt');
+  ds.askThreads.push({ id: threadId, userId: csm.id, title: 'Q4 renewals with declining usage', createdAt: daysAgo(1) });
+  ds.askMessages.push({ id: uid('akm'), threadId, role: 'user', content: 'Which of my accounts renew in Q4 with declining usage?', createdAt: daysAgo(1) });
+  ds.askMessages.push({ id: uid('akm'), threadId, role: 'assistant', content: 'I checked your book and found accounts renewing in Q4 with a negative 4-week usage trend. Open the linked records to dig in.', toolCalls: [{ name: 'list_renewals' }, { name: 'get_usage' }], createdAt: daysAgo(1) });
+}
+
+function buildNotifications(ds: DemoDataset, csms: Profile[], manager: Profile) {
+  csms.forEach((csm) => {
+    const co = ds.companies.find((c) => c.ownerId === csm.id);
+    if (co) {
+      ds.notifications.push({ id: uid('ntf'), userId: csm.id, kind: 'mention', title: `${manager.fullName} mentioned you`, body: `In a note on ${co.name}: "@${csm.fullName.split(' ')[0]} can you confirm the renewal timeline?"`, link: `/company/${co.id}?tab=notes`, readAt: null, createdAt: daysAgo(0) });
+      ds.notifications.push({ id: uid('ntf'), userId: csm.id, kind: 'task_assigned', title: 'New task assigned', body: `${manager.fullName} assigned you "Prep QBR deck" on ${co.name}.`, link: `/company/${co.id}?tab=tasks`, readAt: daysAgo(0), createdAt: daysAgo(2) });
+    }
+  });
+}
+
+const CHANGELOG_SEED: ChangelogEntry[] = [
+  { id: 'cl_100', version: '1.0.0', releasedOn: '2026-07-14', category: 'new', title: 'Compass V1 launch', body: 'Portfolio review, 360s, health engine, renewals, playbooks, digests, ⌘K, integrations, Planhat migration.', position: 0 },
+  { id: 'cl_110_1', version: '1.1.0', releasedOn: '2026-07-16', category: 'fixed', title: '360 quick actions wired', body: 'Log note / Task / Email / Meeting now open the right composer or modal; graceful disconnected-Gmail state.', position: 1 },
+  { id: 'cl_110_2', version: '1.1.0', releasedOn: '2026-07-16', category: 'fixed', title: 'NPS page populated', body: 'Root-caused the empty NPS page, added manual "Log NPS response" and a proper empty state.', position: 2 },
+  { id: 'cl_110_3', version: '1.1.0', releasedOn: '2026-07-16', category: 'improved', title: 'Collapsible sidebar', body: 'No more truncation; collapse toggle + "[" shortcut, persisted per user.', position: 3 },
+  { id: 'cl_110_4', version: '1.1.0', releasedOn: '2026-07-16', category: 'improved', title: 'Everything is clickable', body: 'Portfolio KPI cards, report charts and dashboard widgets drill through to filtered views.', position: 4 },
+  { id: 'cl_110_5', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'Ask Compass', body: 'Chat with an agent about your book — renewals, usage, activity, all scoped to what you can see.', position: 5 },
+  { id: 'cl_110_6', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'Dashboards', body: 'Build, arrange and share widget dashboards from a safe dataset layer.', position: 6 },
+  { id: 'cl_110_7', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'CSV import', body: 'Import companies, contacts and usage metrics with mapping, validation and dedupe modes.', position: 7 },
+  { id: 'cl_110_8', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'Library', body: 'A shelf for QBR decks, one-pagers, templates and links.', position: 8 },
+  { id: 'cl_110_9', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'Whitespace map', body: 'Products × accounts heatmap to spot cross-sell plays; create expansion deals in a click.', position: 9 },
+  { id: 'cl_110_10', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'Contact 360', body: 'Every contact name links to a full record with activity, emails, meetings, NPS and tasks.', position: 10 },
+  { id: 'cl_110_11', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'Latest news', body: 'AI web-search news card on the 360, auto-refreshed weekly for enterprise accounts.', position: 11 },
+  { id: 'cl_110_12', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: 'Usage tab', body: 'Utilisation, per-metric charts and adoption grid driven by usage_metrics.', position: 12 },
+  { id: 'cl_110_13', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: '@mentions & notifications', body: 'Mention teammates in notes; in-app bell + optional Slack DM.', position: 13 },
+  { id: 'cl_110_14', version: '1.1.0', releasedOn: '2026-07-16', category: 'improved', title: 'Editable everywhere', body: 'MEDDIC toggles, contact fields, success-plan statuses and deal qualification are all hand-editable.', position: 14 },
+];

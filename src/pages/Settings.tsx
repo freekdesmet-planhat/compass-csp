@@ -3,6 +3,7 @@ import { PageHeader, PageBody } from '@/components/PageHeader';
 import { Card, CardHeader, CardTitle, CardBody, Button, Chip, Switch, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
+import { gmailConnected, setGmailConnected } from '@/lib/integrations';
 import { Mail, Clock, Bell } from 'lucide-react';
 
 const TIMEZONES = ['Europe/Amsterdam', 'Europe/London', 'America/New_York', 'America/Los_Angeles', 'Asia/Singapore', 'Australia/Sydney'];
@@ -13,6 +14,7 @@ export default function SettingsPage() {
   const [digestHour, setDigestHour] = useState(String(profile.digestHour));
   const [tz, setTz] = useState(profile.timezone);
   const [prefs, setPrefs] = useState({ emailAlerts: true, inAppAlerts: true, weeklyRecap: true });
+  const [gmail, setGmail] = useState(gmailConnected());
 
   return (
     <div>
@@ -21,13 +23,15 @@ export default function SettingsPage() {
         <div className="mx-auto max-w-2xl space-y-4">
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><Mail className="h-4 w-4 text-muted-foreground" /> Gmail & Calendar</CardTitle>
-              <Chip tone="neutral">disconnected</Chip>
+              <Chip tone={gmail ? 'green' : 'neutral'}>{gmail ? 'connected' : 'disconnected'}</Chip>
             </CardHeader>
             <CardBody className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 Connect your Google account to auto-log domain-matched emails, send from the platform, and sync upcoming meetings for AI meeting prep. Base sign-in uses plain OpenID; connecting re-runs OAuth with Gmail + Calendar scopes and <code className="rounded bg-panel px-1">access_type=offline</code>, <code className="rounded bg-panel px-1">prompt=consent</code> to store a refresh token server-side.
               </p>
-              <Button variant="primary" onClick={() => toast('Would run signInWithOAuth with Gmail + Calendar scopes (offline / consent) and store the refresh token', { tone: 'info' })}>Connect Gmail & Calendar</Button>
+              {gmail
+                ? <Button onClick={() => { setGmailConnected(false); setGmail(false); toast('Gmail disconnected'); }}>Disconnect Gmail</Button>
+                : <Button variant="primary" onClick={() => { setGmailConnected(true); setGmail(true); toast('Gmail connected (live mode runs signInWithOAuth with Gmail + Calendar scopes)', { tone: 'info' }); }}>Connect Gmail & Calendar</Button>}
             </CardBody>
           </Card>
 

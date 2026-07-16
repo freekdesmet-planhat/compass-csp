@@ -33,7 +33,7 @@ export function CommandPalette() {
   const go = (path: string) => { setOpen(false); setQuery(''); navigate(path); };
 
   return (
-    <Command.Dialog open={open} onOpenChange={setOpen} label="Command palette" className="fixed left-1/2 top-[18%] z-[100] w-full max-w-xl -translate-x-1/2 overflow-hidden rounded-lg border bg-white shadow-popover">
+    <Command.Dialog open={open} onOpenChange={setOpen} label="Command palette" overlayClassName="fixed inset-0 z-[99] bg-black/20 backdrop-blur-sm motion-reduce:transition-none" className="fixed left-1/2 top-[18%] z-[100] w-full max-w-xl -translate-x-1/2 overflow-hidden rounded-lg border bg-white shadow-popover">
       <div className="flex items-center gap-2 border-b px-3">
         <Compass className="h-4 w-4 text-muted-foreground" />
         <Command.Input value={query} onValueChange={setQuery} placeholder="Search companies, contacts, deals, notes — or run a command…" className="h-11 w-full bg-transparent text-base outline-none placeholder:text-muted-foreground" />
