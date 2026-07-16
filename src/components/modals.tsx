@@ -24,18 +24,21 @@ export const TASK_TYPE_META: Record<TaskType, { label: string; icon: React.Compo
 };
 
 // ── Task creation modal (B5) ──────────────────────────────────────────────────
+// companyId is prefilled when created from a 360; when omitted (e.g. the global
+// Tasks page) a company picker is shown.
 export function TaskModal({
   open, onOpenChange, companyId, defaultTitle = '', defaultDescription = '', defaultDueDate,
 }: {
-  open: boolean; onOpenChange: (o: boolean) => void; companyId: string;
+  open: boolean; onOpenChange: (o: boolean) => void; companyId?: string;
   defaultTitle?: string; defaultDescription?: string; defaultDueDate?: string | null;
 }) {
   const { profile } = useSession();
   const { data: profiles = [] } = useProfiles();
-  const { data: objectives = [] } = useObjectives(companyId);
+  const { data: companies = [] } = useVisibleCompanies();
   const createTask = useCreateTask();
   const { toast } = useToast();
 
+  const [company, setCompany] = useState(companyId ?? '');
   const [title, setTitle] = useState(defaultTitle);
   const [description, setDescription] = useState(defaultDescription);
   const [taskType, setTaskType] = useState<TaskType>('todo');
@@ -44,15 +47,18 @@ export function TaskModal({
   const [assignee, setAssignee] = useState(profile.id);
   const [objectiveId, setObjectiveId] = useState('none');
 
+  const { data: objectives = [] } = useObjectives(company || undefined);
+
   // Re-seed when reopened with fresh defaults (health-tab recommendations).
   const [seed, setSeed] = useState('');
   const key = `${open}-${defaultTitle}`;
-  if (open && key !== seed) { setSeed(key); setTitle(defaultTitle); setDescription(defaultDescription); setDueDate(defaultDueDate ?? ''); }
+  if (open && key !== seed) { setSeed(key); setTitle(defaultTitle); setDescription(defaultDescription); setDueDate(defaultDueDate ?? ''); setCompany(companyId ?? ''); }
 
   const active = profiles.filter((p) => p.isActive);
   const submit = async () => {
+    if (!company) return;
     await createTask.mutateAsync({
-      companyId, title, description, taskType, dueDate: dueDate || null, priority, assigneeId: assignee,
+      companyId: company, title, description, taskType, dueDate: dueDate || null, priority, assigneeId: assignee,
       successPlanObjectiveId: objectiveId === 'none' ? null : objectiveId,
     });
     toast(assignee === profile.id ? 'Task created' : 'Task created & assignee notified');
@@ -64,6 +70,14 @@ export function TaskModal({
       <DialogContent className="max-w-md">
         <DialogTitle className="text-md font-semibold">New task</DialogTitle>
         <div className="mt-3 space-y-3">
+          {!companyId && (
+            <Field label="Account">
+              <Select value={company} onValueChange={setCompany}>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Select account…" /></SelectTrigger>
+                <SelectContent className="max-h-64">{companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+          )}
           <Input placeholder="Task title" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
           <Textarea rows={2} placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
           <div className="grid grid-cols-2 gap-2">
@@ -97,7 +111,7 @@ export function TaskModal({
           )}
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button variant="primary" disabled={!title.trim()} onClick={submit}>Create task</Button>
+            <Button variant="primary" disabled={!title.trim() || !company} onClick={submit}>Create task</Button>
           </div>
         </div>
       </DialogContent>
