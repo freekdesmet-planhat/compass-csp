@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Textarea, HealthDot } from '@/components/ui';
 import { Composer } from './Composer';
 import { TimelineTab } from './TimelineTab';
@@ -7,10 +8,11 @@ import { useLatestSnapshot, useDeals, useSuccessPlans, useContacts, useUpdateCom
 import { useToast } from '@/components/toast';
 import { HEALTH_DIMENSIONS, SEGMENT_PRESETS } from '@/lib/segments';
 import { fmtCurrency, fmtDate, daysUntil, relativeTime } from '@/lib/utils';
-import { Sparkles, Pencil, RefreshCw, Newspaper, ExternalLink } from 'lucide-react';
+import { Sparkles, Pencil, RefreshCw, Newspaper, ExternalLink, ChevronRight } from 'lucide-react';
 import type { Company } from '@/lib/types';
 
 export function OverviewTab({ company }: { company: Company }) {
+  const [, setParams] = useSearchParams();
   const latest = useLatestSnapshot(company.id);
   const { data: deals = [] } = useDeals(company.id);
   const { data: plans = [] } = useSuccessPlans(company.id);
@@ -62,7 +64,7 @@ export function OverviewTab({ company }: { company: Company }) {
         </Panel>
 
         {plan && (
-          <Panel title="Success plan">
+          <Panel title="Success plan" onClick={() => setParams({ tab: 'success-plan' })}>
             <div className="flex items-center justify-between text-sm"><span>{plan.name}</span><span className="tnum font-medium">{plan.progressPct}%</span></div>
             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[#eef0f3]"><div className="h-full rounded-full bg-[var(--green)]" style={{ width: `${plan.progressPct}%` }} /></div>
           </Panel>
@@ -138,10 +140,19 @@ function LatestNewsCard({ company }: { company: Company }) {
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function Panel({ title, children, onClick }: { title: string; children: React.ReactNode; onClick?: () => void }) {
   return (
-    <Card>
-      <CardHeader className="py-2"><CardTitle className="text-sm text-muted-foreground">{title}</CardTitle></CardHeader>
+    <Card
+      onClick={onClick}
+      className={onClick ? 'cursor-pointer transition-colors hover:border-[var(--accent)]' : undefined}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+    >
+      <CardHeader className="py-2">
+        <CardTitle className="text-sm text-muted-foreground">{title}</CardTitle>
+        {onClick && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+      </CardHeader>
       <CardBody className="py-2.5">{children}</CardBody>
     </Card>
   );
