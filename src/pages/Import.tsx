@@ -8,12 +8,12 @@ import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PageHeader, PageBody } from '@/components/PageHeader';
 import {
-  Card, CardBody, Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Chip, EmptyState,
+  Card, CardBody, Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Chip,
 } from '@/components/ui';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
 import { all, insert, update, newId } from '@/lib/store';
-import { Upload, ArrowRight, ArrowLeft, Download, CheckCircle2, Shield } from 'lucide-react';
+import { Upload, ArrowRight, ArrowLeft, Download, CheckCircle2 } from 'lucide-react';
 import type { Company, Contact, UsageMetric, ImportRun } from '@/lib/types';
 
 type Entity = 'companies' | 'contacts' | 'usage';
@@ -55,10 +55,6 @@ function parseCsv(text: string): { headers: string[]; rows: string[][] } {
 }
 
 export default function ImportPage() {
-  const { profile } = useSession();
-  if (profile.role !== 'admin' && profile.role !== 'manager') {
-    return <div><PageHeader title="Import" /><PageBody><EmptyState icon={Shield} title="Admins & managers only" hint="Switch to an admin or manager to import data." /></PageBody></div>;
-  }
   return <div><PageHeader title="Import" subtitle="Bring companies, contacts and usage metrics into Compass" /><PageBody><ImportWizard /></PageBody></div>;
 }
 

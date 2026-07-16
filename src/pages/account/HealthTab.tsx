@@ -124,7 +124,7 @@ export function HealthTab({ company }: { company: Company }) {
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={(d) => new Date(d).toLocaleDateString('en-US', { month: 'short' })} minTickGap={24} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} />
                 <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                <Line type="monotone" dataKey="score" stroke="var(--accent)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="score" stroke="var(--accent)" strokeWidth={2} dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>

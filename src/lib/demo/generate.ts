@@ -30,7 +30,7 @@ const chance = (p: number) => rand() < p;
 const uid = (() => { let n = 1000; return (p: string) => `${p}_${(n++).toString(36)}`; })();
 
 const DAY = 86_400_000;
-const now = new Date('2026-07-14T09:00:00Z').getTime();
+const now = new Date('2026-07-16T08:00:00Z').getTime();
 const daysAgo = (d: number) => new Date(now - d * DAY).toISOString();
 const daysAhead = (d: number) => new Date(now + d * DAY).toISOString();
 const dateOnly = (iso: string) => iso.slice(0, 10);
@@ -75,6 +75,46 @@ const PHASES = ['onboarding', 'adoption', 'value_realization', 'renewal', 'expan
 const COUNTRIES = [['United States', 'San Francisco', 'AMER'], ['United Kingdom', 'London', 'EMEA'], ['Germany', 'Berlin', 'EMEA'], ['France', 'Paris', 'EMEA'], ['Netherlands', 'Amsterdam', 'EMEA'], ['Australia', 'Sydney', 'APAC'], ['Singapore', 'Singapore', 'APAC'], ['Canada', 'Toronto', 'AMER']];
 const CONTACT_ROLES: ContactRole[] = ['exec_sponsor', 'decision_maker', 'main_user', 'tech_ops', 'end_user'];
 const RENEWAL_STAGES = ['T-120 Review', 'Exec Check-in', 'Proposal Sent', 'Negotiation', 'Verbal Commit', 'Closed Won'];
+
+// Stage-appropriate next steps so kanban cards don't all read identically.
+const NEXT_STEPS_BY_STAGE: Record<string, string> = {
+  'T-120 Review': '• Schedule the T-120 renewal review\n• Pull usage + value data for the deck',
+  'Exec Check-in': '• Align exec sponsor on FY26 priorities\n• Confirm the renewal timeline',
+  'Proposal Sent': '• Chase signature on the commercial proposal\n• Answer procurement questions',
+  'Negotiation': '• Work through pricing redlines\n• Loop in deal desk on multi-year terms',
+  'Verbal Commit': '• Get the paperwork countersigned\n• Confirm PO and billing details',
+  'Closed Won': '• Schedule the renewal kickoff\n• Hand off new modules to onboarding',
+};
+
+// NPS verbatims that actually match the score band (Nps.tsx buckets: promoter ≥ 50,
+// detractor < 0, passive in between) — so a promoter never reads like a detractor.
+const NPS_VERBATIMS: Record<'promoter' | 'passive' | 'detractor', string[]> = {
+  promoter: [
+    'Great support, product keeps improving.',
+    'The team is responsive and the roadmap keeps delivering.',
+    'Rolled it out org-wide — clear ROI and happy users.',
+    'Best vendor relationship we have; would recommend without hesitation.',
+    'Onboarding was smooth and adoption stuck.',
+  ],
+  passive: [
+    'Works well overall, a few workflows still feel clunky.',
+    'Solid product, but onboarding was rougher than expected.',
+    'Does the job; would love faster support responses.',
+    'Good value, though reporting could be more flexible.',
+    'Happy enough, waiting to see the next few releases land.',
+  ],
+  detractor: [
+    'Missing features we were promised during the sale.',
+    'Too many bugs lately and support has been slow.',
+    'Hard to justify the renewal at the current price.',
+    'Integrations keep breaking and it is costing us time.',
+    'Adoption stalled — the team finds it hard to use.',
+  ],
+};
+function npsComment(score: number): string {
+  const band = score >= 50 ? 'promoter' : score < 0 ? 'detractor' : 'passive';
+  return pick(NPS_VERBATIMS[band]);
+}
 
 const RECS_POOL: HealthRecommendation[] = [
   { title: 'Resolve the two open P1 tickets', why: 'Support dragged the score −18; both P1s have been open 11+ days.', suggestedTask: { title: 'Escalate open P1s with support lead', dueInDays: 2 } },
@@ -125,6 +165,7 @@ export function generateDemoData(): DemoDataset {
     }
   }
 
+  ensureRenewalStageCoverage(ds);
   ds.alertRules = seedAlertRules();
   buildDigests(ds);
   buildLibrary(ds);
@@ -287,7 +328,7 @@ function buildCompany(
 
   // ── NPS responses ────────────────────────────────────────────────────────────
   contacts.filter((c) => c.npsLatest != null).forEach((c) => {
-    ds.npsResponses.push({ id: uid('nps'), companyId, contactId: c.id, score: c.npsLatest!, comment: c.npsLatest! >= 30 ? 'Great support, product keeps improving.' : c.npsLatest! >= 0 ? 'Works but onboarding was rough.' : 'Missing features we were promised.', respondedAt: c.npsLatestAt! });
+    ds.npsResponses.push({ id: uid('nps'), companyId, contactId: c.id, score: c.npsLatest!, comment: npsComment(c.npsLatest!), respondedAt: c.npsLatestAt! });
   });
   if (chance(0.5)) ds.csatResponses.push({ id: uid('csat'), companyId, contactId: contacts[0]?.id, score: randInt(3, 5), comment: 'Support was responsive.', respondedAt: daysAgo(randInt(5, 60)), context: 'ticket_resolution' });
 
@@ -308,6 +349,7 @@ function buildCompany(
       suggestedStageReason: chance(0.25) ? 'Last call: customer confirmed budget approved and asked for paperwork.' : null,
       contactIds: contacts.slice(0, 2).map((c) => c.id), lastSyncedAt: daysAgo(0),
     };
+    renewalDeal.nextSteps = NEXT_STEPS_BY_STAGE[RENEWAL_STAGES[stageIdx]] ?? renewalDeal.nextSteps;
     ds.deals.push(renewalDeal);
     if (segment !== 'scaled' && chance(0.4)) {
       ds.deals.push({
@@ -389,12 +431,16 @@ function buildCompany(
 
   // ── calendar events (upcoming) + meeting prep ──────────────────────────────
   if (segment !== 'scaled' && chance(0.7)) {
-    const startsAt = daysAhead(randInt(0, 6));
+    // Spread meeting start times across the working day (≈09:00–16:30) instead of
+    // all landing at the seed's 09:00Z — otherwise every card reads "11:00 AM".
+    const startDate = new Date(now + randInt(0, 6) * DAY);
+    startDate.setUTCHours(randInt(9, 16), pick([0, 0, 15, 30, 45]), 0, 0);
+    const startsAt = startDate.toISOString();
     const evId = uid('cal');
     const attendees = contacts.slice(0, 2);
     ds.calendarEvents.push({
       id: evId, companyId, gcalEventId: `gcal_${evId}`, title: `${name} — ${pick(['QBR', 'Renewal sync', 'Check-in'])}`,
-      startsAt, endsAt: new Date(new Date(startsAt).getTime() + 30 * 60000).toISOString(),
+      startsAt, endsAt: new Date(startDate.getTime() + 30 * 60000).toISOString(),
       attendeeEmails: [owner.email, ...attendees.map((a) => a.email!)], organizerEmail: owner.email,
       meetLink: 'https://meet.google.com/abc-defg-hij', status: 'confirmed', matchedContactIds: attendees.map((a) => a.id), loggedActivityId: null, fathomRecordingId: null,
     });
@@ -442,6 +488,35 @@ function pickRecs(result: ReturnType<typeof computeHealth>): HealthRecommendatio
   return shuffled.slice(0, 3);
 }
 
+// Guarantee each CSM's renewal pipeline shows a live "Negotiation" column so the
+// kanban reads as a real book rather than an empty stage. Moves 1–2 deals from a
+// neighbouring stage when Negotiation would otherwise be empty, keeping stage
+// probability / forecast / confidence consistent.
+function ensureRenewalStageCoverage(ds: DemoDataset) {
+  const owners = new Set(ds.deals.filter((d) => d.pipeline === 'renewal').map((d) => d.ownerId));
+  for (const ownerId of owners) {
+    const open = ds.deals.filter((d) => d.pipeline === 'renewal' && d.ownerId === ownerId && d.status === 'open');
+    let need = 2 - open.filter((d) => d.stage === 'Negotiation').length; // aim for ~2 in Negotiation
+    // Only ever pull from a neighbouring stage that would still keep ≥1 deal, so we
+    // never trade the empty "Negotiation" column for a new empty column elsewhere.
+    const sourceStages = ['Proposal Sent', 'Exec Check-in', 'Verbal Commit', 'T-120 Review'];
+    while (need > 0) {
+      const source = sourceStages
+        .map((s) => ({ s, deals: open.filter((d) => d.stage === s) }))
+        .filter((x) => x.deals.length >= 2)
+        .sort((a, b) => b.deals.length - a.deals.length)[0];
+      if (!source) break;
+      const d = source.deals[source.deals.length - 1];
+      d.stage = 'Negotiation';
+      d.stageProbability = 0.75;
+      d.forecastCategory = 'best_case';
+      d.confidence = 75;
+      d.nextSteps = NEXT_STEPS_BY_STAGE['Negotiation'];
+      need--;
+    }
+  }
+}
+
 function seedAlertRules(): AlertRule[] {
   const all: Segment[] = ['scaled', 'mid_touch', 'enterprise'];
   return [
@@ -465,8 +540,38 @@ function buildDigests(ds: DemoDataset) {
     const myAlerts = ds.alerts.filter((a) => a.ownerId === csm.id && a.status === 'open');
     const myTasks = ds.tasks.filter((t) => myCompanies.some((c) => c.id === t.companyId) && !t.completedAt);
     const myMeetings = ds.calendarEvents.filter((e) => myCompanies.some((c) => c.id === e.companyId));
-    const movers = myCompanies.filter((c) => Math.abs(c.healthDeltaWow ?? 0) >= 5).slice(0, 5);
+    const movers = myCompanies.filter((c) => Math.abs(c.healthDeltaWow ?? 0) >= 5).sort((a, b) => Math.abs(b.healthDeltaWow ?? 0) - Math.abs(a.healthDeltaWow ?? 0)).slice(0, 5);
     const renewalCheckpoints = myCompanies.filter((c) => { const d = c.renewalDate ? Math.ceil((new Date(c.renewalDate).getTime() - now) / DAY) : 999; return [120, 90, 60, 30].some((t) => Math.abs(d - t) <= 2); });
+
+    // Top-3 priorities — deduplicated so a single account/signal never fills two
+    // slots (e.g. an alert AND a health-mover for the same company). Draw from
+    // alerts → renewal checkpoints → health movers → overdue tasks, skipping any
+    // account already represented, and backfill the freed slot with the next signal.
+    const sevRank = (s: string) => (s === 'critical' ? 2 : s === 'warning' ? 1 : 0);
+    const usedCo = new Set<string>();
+    const priorities: string[] = [];
+    const overdueCount = myTasks.filter((t) => t.dueDate && new Date(t.dueDate).getTime() < now).length;
+    const daysOut = (c: Company) => (c.renewalDate ? Math.ceil((new Date(c.renewalDate).getTime() - now) / DAY) : 0);
+    for (const a of [...myAlerts].sort((x, y) => sevRank(y.severity) - sevRank(x.severity))) {
+      if (priorities.length >= 3) break;
+      if (a.companyId && usedCo.has(a.companyId)) continue;
+      priorities.push(a.title);
+      if (a.companyId) usedCo.add(a.companyId);
+    }
+    for (const r of renewalCheckpoints) {
+      if (priorities.length >= 3 || usedCo.has(r.id)) continue;
+      priorities.push(`${r.name} hits a renewal checkpoint (T-${daysOut(r)})`);
+      usedCo.add(r.id);
+    }
+    for (const m of movers) {
+      if (priorities.length >= 3 || usedCo.has(m.id)) continue;
+      priorities.push(`${m.name} moved ${(m.healthDeltaWow ?? 0) >= 0 ? '+' : ''}${m.healthDeltaWow} pts WoW — review why`);
+      usedCo.add(m.id);
+    }
+    if (priorities.length < 3 && overdueCount) priorities.push(`Clear ${overdueCount} overdue task${overdueCount > 1 ? 's' : ''}`);
+    if (priorities.length < 3 && myMeetings.length) priorities.push(`Prep for ${myMeetings.length} upcoming meeting${myMeetings.length > 1 ? 's' : ''} using the briefs below`);
+    while (priorities.length < 3) priorities.push('Review your book for accounts needing a proactive touch');
+    const narrative = `Top 3 priorities today: ${priorities.slice(0, 3).map((p, i) => `(${i + 1}) ${p}`).join('. ')}.`;
 
     const content = {
       meetings: myMeetings.map((m) => ({ time: m.startsAt, company: ds.companies.find((c) => c.id === m.companyId)?.name ?? '', companyId: m.companyId!, health: ds.companies.find((c) => c.id === m.companyId)?.healthScore ?? null, calendarEventId: m.id })),
@@ -479,7 +584,7 @@ function buildDigests(ds: DemoDataset) {
     ds.digests.push({
       id: uid('dg'), userId: csm.id, digestType: 'daily', digestDate: dateOnly(daysAgo(0)),
       content,
-      narrative: `Top 3 priorities today: (1) ${myAlerts[0]?.title ?? 'No critical alerts'} — act before your first meeting. (2) ${renewalCheckpoints[0] ? `${renewalCheckpoints[0].name} hits a renewal checkpoint` : 'Clear your overdue tasks'}. (3) ${movers[0] ? `${movers[0].name} moved ${movers[0].healthDeltaWow} pts — review why` : 'Prep for today\'s meetings using the briefs below'}.`,
+      narrative,
     });
   }
 }

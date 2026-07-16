@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Home, LayoutGrid, Handshake, CheckSquare, Bell, Target, Users, Gauge, BarChart3,
   Settings, Shield, Compass, Search, ChevronsUpDown, MessageSquare, BookOpen,
-  PanelLeftClose, PanelLeftOpen, Upload,
+  PanelLeftClose, PanelLeftOpen, Upload, Workflow,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
@@ -70,11 +70,12 @@ export function AppLayout() {
     { to: '/success-plans', label: 'Success Plans', icon: Target },
     { to: '/contacts', label: 'Contacts', icon: Users },
     { to: '/nps', label: 'NPS & CSAT', icon: Gauge },
+    { to: '/playbooks', label: 'Playbooks', icon: Workflow },
     { to: '/library', label: 'Library', icon: BookOpen },
     { to: '/reports', label: 'Reports', icon: BarChart3 },
   ];
   const bottomNav: NavItem[] = [
-    { to: '/import', label: 'Import', icon: Upload, roles: ['manager', 'admin'] },
+    { to: '/import', label: 'Import', icon: Upload },
     { to: '/settings', label: 'Settings', icon: Settings },
     { to: '/admin', label: 'Admin', icon: Shield, roles: ['admin'] },
   ];

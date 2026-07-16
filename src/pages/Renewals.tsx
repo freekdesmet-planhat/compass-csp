@@ -149,7 +149,7 @@ export default function RenewalsPage() {
                         </button>
                       );
                     })}
-                    {cards.length === 0 && <div className="rounded-lg border border-dashed py-4 text-center text-xs text-muted-foreground">—</div>}
+                    {cards.length === 0 && <div className="rounded-lg border border-dashed px-2 py-5 text-center text-xs text-muted-foreground">No deals in this stage</div>}
                   </div>
                 </div>
               );

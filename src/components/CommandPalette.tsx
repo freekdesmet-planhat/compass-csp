@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Command } from 'cmdk';
 import { useNavigate } from 'react-router-dom';
 import { getDb } from '@/lib/store';
-import { Building2, User, Handshake, FileText, CheckSquare, StickyNote, Compass } from 'lucide-react';
+import { Building2, User, Handshake, FileText, CheckSquare, StickyNote, Compass, Upload, Workflow } from 'lucide-react';
 import type { Company, Contact, Deal, Activity } from '@/lib/types';
 
 export function CommandPalette() {
@@ -44,6 +44,8 @@ export function CommandPalette() {
         <Command.Group heading="Quick actions" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-muted-foreground">
           <Item icon={CheckSquare} label="Create task" onSelect={() => go('/tasks')} />
           <Item icon={StickyNote} label="Log a note" onSelect={() => go('/portfolio')} />
+          <Item icon={Upload} label="Import CSV" hint="companies · contacts · usage" onSelect={() => go('/import')} />
+          <Item icon={Workflow} label="View playbooks" onSelect={() => go('/playbooks')} />
           <Item icon={Handshake} label="Go to Renewals" onSelect={() => go('/renewals')} />
         </Command.Group>
 

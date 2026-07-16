@@ -13,7 +13,7 @@ import { useVisibleCompanies, useDashboards, useDashboardWidgets, useDashboardMu
 import { useSession } from '@/lib/session';
 import { runDataset, drillFilter, type DatasetRow } from '@/lib/datasets';
 import { filterToQuery } from '@/lib/portfolioFilters';
-import { fmtNumber } from '@/lib/utils';
+import { fmtNumber, fmtAxisTick } from '@/lib/utils';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip } from 'recharts';
 import { Plus, LayoutDashboard, Trash2, Share2 } from 'lucide-react';
 import type { DashboardWidget, WidgetKind } from '@/lib/types';
@@ -87,13 +87,15 @@ function WidgetView({ widget, visibleIds, ownerName }: { widget: DashboardWidget
         <button onClick={() => removeWidget.mutate(widget.id)} className="text-muted-foreground hover:text-[var(--red)]"><Trash2 className="h-3.5 w-3.5" /></button>
       </CardHeader>
       <CardBody className="py-2">
-        {rows.length === 0 ? <div className="py-6 text-center text-sm text-muted-foreground">No data</div> : <WidgetChart kind={widget.kind} rows={rows} onDrill={drill} />}
+        {rows.length === 0 ? <div className="py-6 text-center text-sm text-muted-foreground">No data yet — this widget will populate as records land.</div> : <WidgetChart kind={widget.kind} rows={rows} measure={widget.measure} onDrill={drill} />}
       </CardBody>
     </Card>
   );
 }
 
-function WidgetChart({ kind, rows, onDrill }: { kind: WidgetKind; rows: DatasetRow[]; onDrill: (label: string) => void }) {
+function WidgetChart({ kind, rows, measure, onDrill }: { kind: WidgetKind; rows: DatasetRow[]; measure?: string | null; onDrill: (label: string) => void }) {
+  const isCurrency = measure === 'sum_arr';
+  const yTick = (v: number) => fmtAxisTick(v, isCurrency);
   if (kind === 'metric') {
     const total = rows.reduce((a, r) => a + r.value, 0);
     return <div className="py-2 text-3xl font-semibold tnum">{fmtNumber(total)}</div>;
@@ -109,25 +111,25 @@ function WidgetChart({ kind, rows, onDrill }: { kind: WidgetKind; rows: DatasetR
     <div className="h-44">
       <ResponsiveContainer width="100%" height="100%">
         {kind === 'line' ? (
-          <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+          <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} minTickGap={16} />
-            <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} />
-            <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-            <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={false} />
+            <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={yTick} width={44} />
+            <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} formatter={(v: number) => yTick(v)} />
+            <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={false} isAnimationActive={false} />
           </LineChart>
         ) : kind === 'donut' ? (
           <PieChart>
-            <Pie data={rows} dataKey="value" nameKey="label" innerRadius={40} outerRadius={64} onClick={(d: { label: string }) => onDrill(d.label)} cursor="pointer">
+            <Pie data={rows} dataKey="value" nameKey="label" innerRadius={40} outerRadius={64} onClick={(d: { label: string }) => onDrill(d.label)} cursor="pointer" isAnimationActive={false}>
               {rows.map((r, i) => <Cell key={r.label} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
             </Pie>
-            <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+            <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} formatter={(v: number) => yTick(v)} />
           </PieChart>
         ) : (
-          <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+          <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} minTickGap={8} />
-            <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} />
-            <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-            <Bar dataKey="value" fill="var(--accent)" cursor="pointer" onClick={(d: { label: string }) => onDrill(d.label)} />
+            <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={yTick} width={44} />
+            <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} formatter={(v: number) => yTick(v)} />
+            <Bar dataKey="value" fill="var(--accent)" cursor="pointer" onClick={(d: { label: string }) => onDrill(d.label)} isAnimationActive={false} />
           </BarChart>
         )}
       </ResponsiveContainer>
@@ -163,7 +165,7 @@ function WidgetEditor({ open, onOpenChange, dashboardId, visibleIds, ownerName }
         <div className="mt-3"><Field label="Title"><Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${meta.label} by ${groupBy}`} /></Field></div>
         <div className="mt-3 rounded-md border p-2">
           <div className="mb-1 text-xs text-muted-foreground">Live preview</div>
-          {preview.length ? <WidgetChart kind={kind} rows={preview} onDrill={() => {}} /> : <div className="py-6 text-center text-sm text-muted-foreground">No data</div>}
+          {preview.length ? <WidgetChart kind={kind} rows={preview} measure={measure} onDrill={() => {}} /> : <div className="py-6 text-center text-sm text-muted-foreground">No data for this dataset/measure combination.</div>}
         </div>
         <div className="mt-3 flex justify-end gap-2"><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button><Button variant="primary" onClick={save}>Add widget</Button></div>
       </DialogContent>

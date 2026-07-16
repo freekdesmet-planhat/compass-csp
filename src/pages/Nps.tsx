@@ -92,14 +92,18 @@ export default function NpsPage() {
             <CardHeader><CardTitle>NPS trend</CardTitle></CardHeader>
             <CardBody>
               <div className="h-48">
+                {trend.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">No NPS responses yet — log one to start the trend.</div>
+                ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
                     <XAxis dataKey="month" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={(m) => new Date(m + '-01').toLocaleDateString('en-US', { month: 'short' })} minTickGap={20} />
                     <YAxis domain={[-100, 100]} tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} />
                     <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                    <Line type="monotone" dataKey="nps" stroke="var(--accent)" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="nps" stroke="var(--accent)" strokeWidth={2} dot={false} isAnimationActive={false} />
                   </LineChart>
                 </ResponsiveContainer>
+                )}
               </div>
               {/* stacked split bar */}
               <div className="mt-3 flex h-3 overflow-hidden rounded-full">

@@ -21,6 +21,18 @@ export function fmtNumber(n: number | null | undefined): string {
   return new Intl.NumberFormat('en-US').format(n);
 }
 
+// Compact tick label for chart axes/tooltips. Keeps large numbers to ~4 chars so
+// they never overflow a narrow axis gutter (e.g. 200000 → "$200K", 1_200_000 → "$1.2M").
+export function fmtAxisTick(n: number | null | undefined, currency = false): string {
+  if (n == null || Number.isNaN(n)) return '';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  const prefix = currency ? '$' : '';
+  if (abs >= 1_000_000) return `${sign}${prefix}${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}M`;
+  if (abs >= 1_000) return `${sign}${prefix}${(abs / 1_000).toFixed(abs >= 10_000 ? 0 : 1).replace(/\.0$/, '')}K`;
+  return `${sign}${prefix}${abs}`;
+}
+
 export function fmtPct(n: number | null | undefined, digits = 0): string {
   if (n == null) return '—';
   return `${n.toFixed(digits)}%`;

@@ -18,16 +18,19 @@ export default function HomePage() {
   const { data: preps = [] } = useMeetingPreps();
   const [prepEventId, setPrepEventId] = useState<string | null>(null);
 
-  const today = new Date('2026-07-14T09:00:00Z');
-  const isMonday = today.getUTCDay() === 1;
+  const today = new Date();
+  const isMonday = today.getDay() === 1;
+  const hour = today.getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const firstName = profile.fullName?.split(' ')[0];
 
   const c = digest?.content;
 
   return (
     <div>
       <PageHeader
-        title="Good morning"
-        subtitle={today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+        title={firstName ? `${greeting}, ${firstName}` : greeting}
+        subtitle={today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
         actions={
           <div className="flex items-center gap-2">
             {(profile.role === 'manager' || profile.role === 'admin') && (

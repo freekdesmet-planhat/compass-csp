@@ -86,9 +86,9 @@ export default function ReportsPage() {
                     <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} allowDecimals={false} />
                     <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="green" stackId="a" fill="var(--green)" cursor="pointer" onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'green' })}`)} />
-                    <Bar dataKey="amber" stackId="a" fill="var(--amber)" cursor="pointer" onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'amber' })}`)} />
-                    <Bar dataKey="red" stackId="a" fill="var(--red)" cursor="pointer" onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'red' })}`)} />
+                    <Bar dataKey="green" stackId="a" fill="var(--green)" cursor="pointer" isAnimationActive={false} onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'green' })}`)} />
+                    <Bar dataKey="amber" stackId="a" fill="var(--amber)" cursor="pointer" isAnimationActive={false} onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'amber' })}`)} />
+                    <Bar dataKey="red" stackId="a" fill="var(--red)" cursor="pointer" isAnimationActive={false} onClick={(d: { segment: string }) => navigate(`/portfolio${filterToQuery({ segment: LABEL_TO_SEGMENT[d.segment], healthBand: 'red' })}`)} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

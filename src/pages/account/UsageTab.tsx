@@ -92,7 +92,7 @@ export function UsageTab({ company }: { company: Company }) {
                         <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={(d) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} minTickGap={24} />
                         <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} />
                         <RTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                        <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={false} isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>

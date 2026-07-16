@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
 import {
   Chip, Avatar, Input, Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, EmptyState,
@@ -7,7 +7,7 @@ import {
 import { useContacts, useVisibleCompanies, useUpdateContact } from '@/lib/hooks';
 import { useToast } from '@/components/toast';
 import { relativeTime, daysUntil } from '@/lib/utils';
-import { Users, Star, Zap, Search, Plus, X, Download, ChevronRight, ChevronDown, Save } from 'lucide-react';
+import { Users, Star, Zap, Search, Plus, X, Download, Upload, ChevronRight, ChevronDown, Save } from 'lucide-react';
 import type { Contact, ContactRole, Company } from '@/lib/types';
 
 const ROLE_LABEL: Record<string, string> = { exec_sponsor: 'Exec Sponsor', decision_maker: 'Decision Maker', main_user: 'Main User', tech_ops: 'Tech / Ops', end_user: 'End User' };
@@ -39,6 +39,7 @@ interface Condition { field: string; op: string; value: string }
 const VIEWS_KEY = 'compass-contact-views';
 
 export default function ContactsPage() {
+  const navigate = useNavigate();
   const { data: companies = [] } = useVisibleCompanies();
   const { data: allContacts = [] } = useContacts();
   const updateContact = useUpdateContact();
@@ -154,6 +155,7 @@ export default function ContactsPage() {
             <div className="ml-auto flex items-center gap-2">
               <Button size="sm" variant="ghost" onClick={saveView}><Save className="h-3.5 w-3.5" /> Save view</Button>
               <Button size="sm" variant="outline" onClick={exportCsv}><Download className="h-3.5 w-3.5" /> Export CSV</Button>
+              <Button size="sm" variant="outline" onClick={() => navigate('/import')}><Upload className="h-3.5 w-3.5" /> Import</Button>
             </div>
           </div>
         </div>

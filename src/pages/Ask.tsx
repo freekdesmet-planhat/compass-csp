@@ -62,7 +62,7 @@ export default function AskPage() {
       const hits = companies.filter((c) => (c.lastTouchAt ? Math.abs(daysUntil(c.lastTouchAt) ?? 0) : 9999) >= days).slice(0, 15);
       return { text: hits.length ? `${hits.length} accounts with no touch in ${days}+ days:\n${hits.map((c) => `• ${c.name}`).join('\n')}` : `You've touched every account within ${days} days. 🎉`, ids: hits.map((c) => c.id), tools: [{ name: 'search_companies' }] };
     }
-    if (q.includes('risk')) {
+    if (q.includes('risk') || q.includes('red') || (q.includes('health') && (q.includes('low') || q.includes('poor')))) {
       const hits = companies.filter((c) => c.healthBand === 'red' || (c.healthBand === 'amber' && (daysUntil(c.renewalDate) ?? 999) <= 90));
       return { text: `${hits.length} at-risk accounts (${fmtCurrency(hits.reduce((a, c) => a + (c.arr ?? 0), 0))} ARR):\n${hits.slice(0, 15).map((c) => `• ${withArr(c)} — health ${c.healthScore}`).join('\n')}`, ids: hits.map((c) => c.id), tools: [{ name: 'aggregate_portfolio' }, { name: 'get_health_breakdown' }] };
     }

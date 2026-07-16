@@ -6,6 +6,7 @@ import { useProfiles, useAlertRules, useVisibleCompanies } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS, HEALTH_DIMENSIONS, SEGMENT_LABELS, type Segment } from '@/lib/segments';
+import { PLAYBOOKS } from '@/lib/playbooks';
 import { ImportWizard } from './Import';
 import { Shield, Plug, ChevronDown } from 'lucide-react';
 import type { Profile } from '@/lib/types';
@@ -174,25 +175,17 @@ function AlertRulesTab() {
   );
 }
 
-const PLAYBOOKS = [
-  { name: 'Onboarding (Scaled)', trigger: 'new_customer', steps: [['Welcome email sequence', 0, 'normal'], ['Activation check @ day 14', 14, 'normal'], ['30-day value review', 30, 'high']] },
-  { name: 'Renewal 120-day motion (Mid/Ent)', trigger: 'renewal_t_minus', steps: [['T-120 internal review', 0, 'normal'], ['T-90 exec check-in', 30, 'high'], ['T-60 proposal', 60, 'high'], ['T-30 close plan', 90, 'high']] },
-  { name: 'Scaled renewal automation', trigger: 'renewal_t_minus', steps: [['T-60 renewal email 1', 0, 'normal'], ['T-45 reminder', 15, 'normal'], ['T-15 final notice', 45, 'high']] },
-  { name: 'Risk turnaround', trigger: 'health_drop', steps: [['Root-cause call', 2, 'high'], ['Exec escalation', 5, 'high'], ['Path-to-green plan', 7, 'high']] },
-  { name: 'Enterprise exec-sponsor cadence', trigger: 'manual', steps: [['Quarterly exec sync', 0, 'normal'], ['QBR prep', 80, 'normal'], ['QBR', 90, 'high']] },
-];
-
 function PlaybooksTab() {
   const [open, setOpen] = useState<number | null>(0);
   const { toast } = useToast();
   return (
     <div className="space-y-2">
       {PLAYBOOKS.map((pb, i) => (
-        <Card key={i}>
+        <Card key={pb.id}>
           <button className="flex w-full items-center gap-2 px-4 py-3 text-left" onClick={() => setOpen(open === i ? null : i)}>
             <ChevronDown className={`h-4 w-4 transition-transform ${open === i ? 'rotate-180' : ''}`} />
             <span className="font-medium">{pb.name}</span>
-            <Chip tone="neutral">{pb.trigger.replace(/_/g, ' ')}</Chip>
+            <Chip tone="neutral">{pb.triggerLabel}</Chip>
             <span className="ml-auto text-sm text-muted-foreground">{pb.steps.length} steps</span>
           </button>
           {open === i && (
@@ -201,9 +194,9 @@ function PlaybooksTab() {
                 {pb.steps.map((s, n) => (
                   <div key={n} className="flex items-center gap-3 rounded-md border px-3 py-1.5 text-base">
                     <span className="w-5 text-sm text-muted-foreground tnum">{n + 1}</span>
-                    <span className="flex-1">{s[0]}</span>
-                    <Chip>due +{s[1]}d</Chip>
-                    <Chip tone={s[2] === 'high' ? 'red' : 'neutral'}>{s[2]}</Chip>
+                    <span className="flex-1">{s.title}</span>
+                    <Chip>due +{s.dueInDays}d</Chip>
+                    <Chip tone={s.priority === 'high' ? 'red' : 'neutral'}>{s.priority}</Chip>
                   </div>
                 ))}
                 <Button size="sm" variant="outline" onClick={() => toast('Step added (builder scaffold)')}>+ Add step</Button>

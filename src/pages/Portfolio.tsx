@@ -9,7 +9,7 @@ import { useToast } from '@/components/toast';
 import { SEGMENT_PRESETS, KPI_LABELS, SEGMENT_LABELS, type Segment } from '@/lib/segments';
 import { fmtCurrency, fmtDateShort, daysUntil, relativeTime, healthFactor } from '@/lib/utils';
 import { paramsToFilter, filterToQuery, applyFilter, describeFilter, isEmptyFilter, type FilterSpec } from '@/lib/portfolioFilters';
-import { X, CheckSquare, Play } from 'lucide-react';
+import { X, CheckSquare, Play, Upload } from 'lucide-react';
 import type { Company, Deal, NpsResponse, UsageMetric } from '@/lib/types';
 
 interface KpiCtx { deals: Deal[]; nps: NpsResponse[]; usage: UsageMetric[] }
@@ -113,6 +113,7 @@ export default function PortfolioPage() {
                 <SelectItem value="enterprise">Enterprise</SelectItem>
               </SelectContent>
             </Select>
+            <Button variant="outline" size="sm" onClick={() => navigate('/import')}><Upload className="h-3.5 w-3.5" /> Import</Button>
           </div>
         }
       />
