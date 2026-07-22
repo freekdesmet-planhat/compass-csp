@@ -6,9 +6,15 @@
  * in order, applies the EXACT field mappings, resolves references in a second pass
  * once all contacts exist, and ends with a reconciliation report.
  *
- * Base URL https://api.planhat.com, header `Authorization: Bearer $PLANHAT_API_TOKEN`.
+ * Base URL https://api.planhatdemo.com (this tenant is on Planhat's demo cluster),
+ * header `Authorization: Bearer $PLANHAT_API_TOKEN`.
  * Everything is paginated (limit=2000&offset=N) and throttled to ~5 req/s with
  * retry/backoff on 429/5xx.
+ *
+ * Idempotency is enforced by the `upsert()` helper via select-then-update/insert
+ * (matching sync-planhat), NOT ON CONFLICT — the (source, source_id) indexes are
+ * PARTIAL. Tables with a natural key (health_snapshots, usage_metrics) pass it
+ * explicitly; they have no source_id column.
  *
  * Run with env set, e.g.:
  *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... PLANHAT_API_TOKEN=... npm run migrate:planhat
@@ -28,7 +34,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // ── env ──────────────────────────────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const PLANHAT_API_TOKEN = process.env.PLANHAT_API_TOKEN;
+// .trim() guards against a trailing newline from a .env paste (a bug we hit once).
+const PLANHAT_API_TOKEN = process.env.PLANHAT_API_TOKEN?.trim();
 const MIGRATE_DIMENSION_IDS = (process.env.MIGRATE_DIMENSION_IDS ?? '')
   .split(',')
   .map((s) => s.trim())
@@ -44,7 +51,7 @@ if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !PLANHAT_API_TOKEN) {
   process.exit(1);
 }
 
-const PLANHAT_BASE = 'https://api.planhat.com';
+const PLANHAT_BASE = 'https://api.planhatdemo.com';
 const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -167,19 +174,67 @@ async function planhatGet(path: string, params: Rec = {}): Promise<Rec[]> {
   return all;
 }
 
-// ── Supabase upsert helper (chunked; returns rows for id mapping) ─────────────
+// ── Supabase upsert helper (select-then-update/insert; returns rows for mapping)
+// The (source, source_id) unique indexes are PARTIAL (where source_id is not
+// null), so ON CONFLICT can't target them (Postgres 42P10). We look up existing
+// rows by the key columns, bulk-INSERT the new ones, and per-row UPDATE the rest
+// — the same approach sync-planhat uses. Errors always throw (no silent writes).
+//
+// keyCols defaults to (source, source_id). Natural-key tables (health_snapshots,
+// usage_metrics) pass their own key and must not include a source_id column.
 async function upsert(
   table: string,
   rows: Rec[],
-  onConflict = 'source,source_id'
+  keyCols: string[] = ['source', 'source_id']
 ): Promise<Rec[]> {
   if (!rows.length) return [];
+  const isSourceKey = keyCols.length === 2 && keyCols[0] === 'source' && keyCols[1] === 'source_id';
+  const keyOf = (r: Rec) => keyCols.map((k) => String(r[k])).join(' ');
   const out: Rec[] = [];
+
   for (let i = 0; i < rows.length; i += 500) {
     const chunk = rows.slice(i, i + 500);
-    const { data, error } = await sb.from(table).upsert(chunk, { onConflict }).select();
-    if (error) throw new Error(`upsert ${table} [${i}..${i + chunk.length}]: ${error.message}`);
-    if (data) out.push(...data);
+
+    // Resolve existing ids for the whole chunk in one query.
+    let existing: Rec[] = [];
+    if (isSourceKey) {
+      const sids = [...new Set(chunk.map((r) => r.source_id).filter(Boolean))] as string[];
+      if (sids.length) {
+        const { data, error } = await sb.from(table).select('id, source, source_id').eq('source', 'planhat').in('source_id', sids);
+        if (error) throw new Error(`select ${table} [${i}..${i + chunk.length}]: ${error.message}`);
+        existing = data ?? [];
+      }
+    } else {
+      // Pivot on the first (selective) key column, then match the full key in memory.
+      const pivot = keyCols[0];
+      const vals = [...new Set(chunk.map((r) => r[pivot]).filter((v) => v != null))];
+      if (vals.length) {
+        const { data, error } = await sb.from(table).select(['id', ...keyCols].join(',')).in(pivot, vals as string[]);
+        if (error) throw new Error(`select ${table} [${i}..${i + chunk.length}]: ${error.message}`);
+        existing = data ?? [];
+      }
+    }
+    const idByKey = new Map<string, string>();
+    for (const r of existing) idByKey.set(keyOf(r), r.id as string);
+
+    const toInsert: Rec[] = [];
+    const toUpdate: { id: string; row: Rec }[] = [];
+    for (const r of chunk) {
+      const id = idByKey.get(keyOf(r));
+      if (id) toUpdate.push({ id, row: r });
+      else toInsert.push(r);
+    }
+
+    if (toInsert.length) {
+      const { data, error } = await sb.from(table).insert(toInsert).select();
+      if (error) throw new Error(`insert ${table} [${i}..${i + chunk.length}]: ${error.message}`);
+      if (data) out.push(...data);
+    }
+    for (const { id, row } of toUpdate) {
+      const { data, error } = await sb.from(table).update(row).eq('id', id).select().single();
+      if (error) throw new Error(`update ${table} (${keyCols.map((k) => `${k}=${row[k]}`).join(', ')}): ${error.message}`);
+      if (data) out.push(data);
+    }
   }
   return out;
 }
@@ -388,7 +443,7 @@ async function step2Companies() {
       const rounded = Math.round(score);
       healthRows.push({
         source: 'planhat',
-        source_id: `${cid}:health:${off}`,
+        // NB: health_snapshots has no source_id column; key is (company_id, snapshot_date).
         company_id: null, // set after companies upserted
         _cid: cid, // temp
         snapshot_date: dateOnly(nowMs - off * DAY_MS),
@@ -414,7 +469,7 @@ async function step2Companies() {
       return { ...rest, company_id };
     })
     .filter(Boolean) as Rec[];
-  await upsert('health_snapshots', resolvedHealth);
+  await upsert('health_snapshots', resolvedHealth, ['company_id', 'snapshot_date']);
   stats.healthSnapshots += resolvedHealth.length;
 }
 
@@ -519,7 +574,6 @@ async function step4Licenses() {
   const usageRows: Rec[] = [];
 
   for (const l of licenses) {
-    const lid = asId(l._id ?? l.id);
     const companyId = resolveCompany(l.companyId ?? l.company);
     if (!companyId) continue;
     const mrr = num(l.mrr) ?? 0;
@@ -530,9 +584,9 @@ async function step4Licenses() {
     agg.set(companyId, cur);
 
     const when = l.fromDate ?? l.startDate ?? l.date ?? l.createdAt;
+    // usage_metrics key is (company_id, metric_key, metric_date); no source_id column.
+    // Multiple licences for one company on the same date collapse to one row (last wins).
     usageRows.push({
-      source: 'planhat',
-      source_id: `${lid}:license_mrr`,
       company_id: companyId,
       metric_key: 'license_mrr',
       metric_date: dateOnly(when ?? Date.now()),
@@ -550,7 +604,7 @@ async function step4Licenses() {
     stats.licenses.companiesUpdated++;
   }
   if (usageRows.length) {
-    await upsert('usage_metrics', usageRows);
+    await upsert('usage_metrics', usageRows, ['company_id', 'metric_key', 'metric_date']);
     stats.usageMetrics += usageRows.length;
   }
 }
@@ -965,9 +1019,8 @@ async function step12DimensionData() {
         continue;
       }
       for (const pt of extractDimensionPoints(res)) {
+        // usage_metrics key is (company_id, metric_key, metric_date); no source_id column.
         usageRows.push({
-          source: 'planhat',
-          source_id: `${planhatCompanyId}:${dimid}:${pt.date}`,
           company_id: compassCompanyId,
           metric_key: dimid,
           metric_date: pt.date,
@@ -979,12 +1032,13 @@ async function step12DimensionData() {
     if (done % 50 === 0) console.log(`     …${done}/${companyMap.size} companies`);
     // flush periodically to bound memory
     if (usageRows.length >= 2000) {
-      await upsert('usage_metrics', usageRows.splice(0, usageRows.length));
-      stats.usageMetrics += 2000;
+      const batch = usageRows.splice(0, usageRows.length);
+      await upsert('usage_metrics', batch, ['company_id', 'metric_key', 'metric_date']);
+      stats.usageMetrics += batch.length;
     }
   }
   if (usageRows.length) {
-    await upsert('usage_metrics', usageRows);
+    await upsert('usage_metrics', usageRows, ['company_id', 'metric_key', 'metric_date']);
     stats.usageMetrics += usageRows.length;
   }
 }

@@ -1,0 +1,13 @@
+-- ============================================================================
+-- Compass — schedule the Planhat sync (companies + endusers → contacts).
+-- ----------------------------------------------------------------------------
+-- Mirrors the other integration polls in 20260714090006_cron.sql. Runs every
+-- 30 minutes via pg_cron → pg_net → the sync-planhat Edge Function, using the
+-- public.invoke_edge(fn) helper + Vault secrets defined in that migration.
+--
+-- The function is incremental (updatedAt cursor with early-stop), so a 30-min
+-- cadence is cheap: a no-change pass scans ~1 record per entity.
+--
+-- cron.schedule() upserts by job name, so re-running this migration is safe.
+-- ============================================================================
+select cron.schedule('compass-sync-planhat', '*/30 * * * *', $$select public.invoke_edge('sync-planhat')$$);
