@@ -1,5 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { all, update, insert, remove, newId, getDb } from './store';
+import { isDemoMode } from './supabase';
+import {
+  fetchCompanies, fetchCompany, fetchContacts, fetchContact, fetchProfiles,
+  updateContactRow, insertTaskRow,
+} from './realStore';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS } from './segments';
@@ -27,7 +32,8 @@ export function useVisibleCompanies() {
   const { profile, allProfiles } = useSession();
   return useQuery({
     queryKey: ['companies', profile.id],
-    queryFn: () => {
+    queryFn: async () => {
+      if (!isDemoMode) return fetchCompanies(); // RLS scopes visibility server-side
       const scope = visibleOwnerScope(profile, allProfiles);
       return (all('companies') as Company[]).filter((c) => scope(c.ownerId, c.collaboratorIds));
     },
@@ -38,7 +44,10 @@ export function useCompany(id: string | undefined) {
   return useQuery({
     queryKey: ['company', id],
     enabled: !!id,
-    queryFn: () => (all('companies') as Company[]).find((c) => c.id === id) ?? null,
+    queryFn: async () => {
+      if (!isDemoMode) return fetchCompany(id!);
+      return (all('companies') as Company[]).find((c) => c.id === id) ?? null;
+    },
   });
 }
 
@@ -55,7 +64,10 @@ export function useVisibleCompanyIdSet(): Set<string> {
 export function useContacts(companyId?: string) {
   return useQuery({
     queryKey: ['contacts', companyId],
-    queryFn: () => (all('contacts') as Contact[]).filter((c) => !companyId || c.companyId === companyId),
+    queryFn: async () => {
+      if (!isDemoMode) return fetchContacts(companyId);
+      return (all('contacts') as Contact[]).filter((c) => !companyId || c.companyId === companyId);
+    },
   });
 }
 
@@ -72,14 +84,15 @@ export function useActivities(companyId?: string) {
 export function useDeals(companyId?: string) {
   return useQuery({
     queryKey: ['deals', companyId],
-    queryFn: () => (all('deals') as Deal[]).filter((d) => !companyId || d.companyId === companyId),
+    queryFn: () => (isDemoMode ? (all('deals') as Deal[]).filter((d) => !companyId || d.companyId === companyId) : ([] as Deal[])),
   });
 }
 
 export function useTasks(companyId?: string) {
   return useQuery({
     queryKey: ['tasks', companyId],
-    queryFn: () => (all('tasks') as Task[]).filter((t) => !companyId || t.companyId === companyId),
+    // Real mode: tasks aren't synced from Planhat yet → empty (not demo data).
+    queryFn: () => (isDemoMode ? (all('tasks') as Task[]).filter((t) => !companyId || t.companyId === companyId) : ([] as Task[])),
   });
 }
 
@@ -88,7 +101,7 @@ export function useAlerts() {
 }
 
 export function useAlertRules() {
-  return useQuery({ queryKey: ['alertRules'], queryFn: () => getDb().alertRules });
+  return useQuery({ queryKey: ['alertRules'], queryFn: () => (isDemoMode ? getDb().alertRules : getDb().alertRules.slice(0, 0)) });
 }
 
 export function useHealthSnapshots(companyId?: string) {
@@ -125,7 +138,7 @@ export function useObjectives(companyId?: string, planId?: string) {
 }
 
 export function useNps(companyId?: string) {
-  return useQuery({ queryKey: ['nps', companyId], queryFn: () => (all('npsResponses') as NpsResponse[]).filter((n) => !companyId || n.companyId === companyId) });
+  return useQuery({ queryKey: ['nps', companyId], queryFn: () => (isDemoMode ? (all('npsResponses') as NpsResponse[]).filter((n) => !companyId || n.companyId === companyId) : ([] as NpsResponse[])) });
 }
 export function useCreateNps() {
   const qc = useQueryClient();
@@ -146,7 +159,7 @@ export function useTickets(companyId?: string) {
   return useQuery({ queryKey: ['tickets', companyId], queryFn: () => (all('tickets') as Ticket[]).filter((t) => !companyId || t.companyId === companyId) });
 }
 export function useUsageMetrics(companyId?: string) {
-  return useQuery({ queryKey: ['usage', companyId], queryFn: () => (all('usageMetrics') as UsageMetric[]).filter((u) => !companyId || u.companyId === companyId) });
+  return useQuery({ queryKey: ['usage', companyId], queryFn: () => (isDemoMode ? (all('usageMetrics') as UsageMetric[]).filter((u) => !companyId || u.companyId === companyId) : ([] as UsageMetric[])) });
 }
 export function useCalendarEvents(companyId?: string) {
   return useQuery({ queryKey: ['calendar', companyId], queryFn: () => (all('calendarEvents') as CalendarEvent[]).filter((e) => !companyId || e.companyId === companyId) });
@@ -168,7 +181,7 @@ export function useDigest(userId: string, type: 'daily' | 'weekly_exec' = 'daily
 }
 
 export function useProfiles() {
-  return useQuery({ queryKey: ['profiles'], queryFn: () => getDb().profiles });
+  return useQuery({ queryKey: ['profiles'], queryFn: async () => (isDemoMode ? getDb().profiles : fetchProfiles()) });
 }
 
 // ── Mutations ────────────────────────────────────────────────────────────────
@@ -252,6 +265,7 @@ export function useCreateTask() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async (t: Partial<Task> & { companyId: string; title: string }) => {
+      if (!isDemoMode) { await insertTaskRow({ ...t, creatorId: profile.id }); return null; }
       const assigneeId = t.assigneeId ?? profile.id;
       const row = insert('tasks', {
         id: newId('ts'), companyId: t.companyId, assigneeId, creatorId: profile.id,
@@ -398,7 +412,8 @@ export function useUpdateSuccessPlan() {
 export function useUpdateContact() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Contact> }) => update('contacts', id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Contact> }) =>
+      isDemoMode ? update('contacts', id, patch) : await updateContactRow(id, patch as Record<string, unknown>),
     onSuccess: (c) => {
       qc.invalidateQueries({ queryKey: ['contacts'] });
       if (c) qc.invalidateQueries({ queryKey: ['contact', c.id] });
@@ -410,7 +425,10 @@ export function useContact(id: string | undefined) {
   return useQuery({
     queryKey: ['contact', id],
     enabled: !!id,
-    queryFn: () => (all('contacts') as Contact[]).find((c) => c.id === id) ?? null,
+    queryFn: async () => {
+      if (!isDemoMode) return fetchContact(id!);
+      return (all('contacts') as Contact[]).find((c) => c.id === id) ?? null;
+    },
   });
 }
 
