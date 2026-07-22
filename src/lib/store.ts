@@ -5,7 +5,7 @@
 
 import { generateDemoData, type DemoDataset } from './demo/generate';
 
-const STORAGE_KEY = 'compass-demo-v5';
+const STORAGE_KEY = 'compass-demo-v6';
 
 function load(): DemoDataset {
   if (typeof localStorage !== 'undefined') {

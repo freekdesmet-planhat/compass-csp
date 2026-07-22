@@ -139,24 +139,38 @@ export function generateDemoData(): DemoDataset {
     dashboardWidgets: [], askThreads: [], askMessages: [], changelog: [], importRuns: [],
   };
 
-  // ── Profiles: admin, manager, 3 CSMs (one per segment) ────────────────────
-  const admin: Profile = { id: 'u_admin', email: 'freek.desmet@planhat.com', fullName: 'Freek de Smet', role: 'admin', segment: null, timezone: 'Europe/Amsterdam', digestHour: 7, isActive: true };
-  const manager: Profile = { id: 'u_mgr', email: 'manager@planhat.com', fullName: 'Dana Whitmore', role: 'manager', segment: null, timezone: 'Europe/Amsterdam', digestHour: 8, isActive: true };
-  const csmScaled: Profile = { id: 'u_scaled', email: 'sam.scaled@planhat.com', fullName: 'Sam Ellis', role: 'csm', segment: 'scaled', managerId: manager.id, timezone: 'Europe/Amsterdam', digestHour: 7, isActive: true };
-  const csmMid: Profile = { id: 'u_mid', email: 'morgan.mid@planhat.com', fullName: 'Morgan Reyes', role: 'csm', segment: 'mid_touch', managerId: manager.id, timezone: 'Europe/London', digestHour: 8, isActive: true };
-  const csmEnt: Profile = { id: 'u_ent', email: 'ellis.ent@planhat.com', fullName: 'Ellis Fontaine', role: 'csm', segment: 'enterprise', managerId: manager.id, timezone: 'America/New_York', digestHour: 7, isActive: true };
-  ds.profiles.push(admin, manager, csmScaled, csmMid, csmEnt);
+  // ── Profiles: Freek (admin), Bey (manager), 10 CSMs across the 3 segments ──
+  // Mirrors the real internal roster seeded in Supabase so demo + live match.
+  const admin: Profile = { id: 'u_admin', email: 'freek.desmet@planhat.com', fullName: 'Freek Desmet', role: 'admin', segment: null, timezone: 'Europe/Amsterdam', digestHour: 7, isActive: true };
+  const manager: Profile = { id: 'u_mgr', email: 'beyonce@planhat.com', fullName: 'Bey', role: 'manager', segment: null, timezone: 'Europe/Amsterdam', digestHour: 8, isActive: true };
+
+  // Each CSM owns a book; per-segment counts still total scaled 150 / mid 70 / ent 12.
+  const CSM_SEED: { id: string; email: string; fullName: string; segment: Segment; count: number; tz: string }[] = [
+    { id: 'u_aretha',  email: 'aretha@planhat.com',       fullName: 'Aretha',   segment: 'scaled',     count: 38, tz: 'Europe/Amsterdam' },
+    { id: 'u_axl',     email: 'axl@planhat.com',          fullName: 'Axl',      segment: 'scaled',     count: 38, tz: 'Europe/London' },
+    { id: 'u_bill',    email: 'bill@planhat.com',         fullName: 'Bill',     segment: 'scaled',     count: 37, tz: 'America/New_York' },
+    { id: 'u_bob',     email: 'bob@planhat.com',          fullName: 'Bob',      segment: 'scaled',     count: 37, tz: 'Europe/Amsterdam' },
+    { id: 'u_ella',    email: 'ella@planhat.com',         fullName: 'Ella',     segment: 'mid_touch',  count: 24, tz: 'Europe/London' },
+    { id: 'u_elvis',   email: 'elvis@planhat.com',        fullName: 'The King', segment: 'mid_touch',  count: 23, tz: 'America/New_York' },
+    { id: 'u_freddie', email: 'freddie@planhat.com',      fullName: 'Freddie',  segment: 'mid_touch',  count: 23, tz: 'Europe/London' },
+    { id: 'u_irma',    email: 'irma.sjogren@planhat.com', fullName: 'Irma',     segment: 'enterprise', count: 4,  tz: 'Europe/Amsterdam' },
+    { id: 'u_mick',    email: 'mick@planhat.com',         fullName: 'Mick',     segment: 'enterprise', count: 4,  tz: 'Europe/London' },
+    { id: 'u_taylor',  email: 'taylor@planhat.com',       fullName: 'Taylor',   segment: 'enterprise', count: 4,  tz: 'America/New_York' },
+  ];
+  const csms: Profile[] = CSM_SEED.map((c) => ({
+    id: c.id, email: c.email, fullName: c.fullName, role: 'csm', segment: c.segment,
+    managerId: manager.id, timezone: c.tz, digestHour: 7, isActive: true,
+  }));
+  ds.profiles.push(admin, manager, ...csms);
 
   // ── products catalogue (C5) ────────────────────────────────────────────────
   ds.products = PRODUCTS.map((p, i) => ({ id: `prod_${i + 1}`, name: p.name, category: p.category, position: i + 1 }));
 
   // Full-size books (D8): scaled 150, mid-touch 70, enterprise 12 — exercises
-  // pagination + performance honestly (no 10× scale-down).
-  const books: { csm: Profile; segment: Segment; count: number }[] = [
-    { csm: csmScaled, segment: 'scaled', count: 150 },
-    { csm: csmMid, segment: 'mid_touch', count: 70 },
-    { csm: csmEnt, segment: 'enterprise', count: 12 },
-  ];
+  // pagination + performance honestly (no 10× scale-down), now split per CSM.
+  const books: { csm: Profile; segment: Segment; count: number }[] = CSM_SEED.map((c, i) => ({
+    csm: csms[i], segment: c.segment, count: c.count,
+  }));
 
   for (const book of books) {
     const preset = SEGMENT_PRESETS[book.segment];
@@ -169,9 +183,9 @@ export function generateDemoData(): DemoDataset {
   ds.alertRules = seedAlertRules();
   buildDigests(ds);
   buildLibrary(ds);
-  buildDashboards(ds, [csmScaled, csmMid, csmEnt], manager);
-  buildAskCompass(ds, csmEnt);
-  buildNotifications(ds, [csmScaled, csmMid, csmEnt], manager);
+  buildDashboards(ds, csms, manager);
+  buildAskCompass(ds, csms.find((c) => c.segment === 'enterprise') ?? csms[0]);
+  buildNotifications(ds, csms, manager);
   ds.changelog = CHANGELOG_SEED;
   return ds;
 }
