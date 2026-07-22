@@ -191,12 +191,30 @@ serve(async () => {
 
     // ── Companies ──────────────────────────────────────────────────────────
     const co = await fetchUpdated("/companies", since);
+    // Owner mapping: a Planhat company's owner is a Planhat USER _id; resolve it
+    // to a Compass profile via profiles.planhat_user_id (populated by the users
+    // pass). Built once; only set owner_id when it resolves so we never wipe an
+    // existing owner with null. Falls back to the custom "CSM" field.
+    const profileByPlanhatUser = new Map<string, string>();
+    if (co.changed.size) {
+      const { data: profs, error: pErr } = await supabase
+        .from("profiles").select("id, planhat_user_id").not("planhat_user_id", "is", null);
+      if (pErr) throw new Error(`companies: owner map load: ${pErr.message}`);
+      for (const p of profs ?? []) if (p.planhat_user_id) profileByPlanhatUser.set(String(p.planhat_user_id), p.id as string);
+    }
+    const asPlanhatId = (v: any): string | null =>
+      v == null ? null : typeof v === "string" ? v : (v._id ?? v.id ?? null);
+    let companiesOwned = 0;
     const coRes = await writeChanged(supabase, "companies", co.changed, (c) => {
+      const ownerPlanhatId = asPlanhatId(c.owner) ?? asPlanhatId(c.custom?.["CSM"]);
+      const ownerId = ownerPlanhatId ? profileByPlanhatUser.get(String(ownerPlanhatId)) : undefined;
+      if (ownerId) companiesOwned++;
       const patch: Record<string, unknown> = {
         name: c.name,
         arr: c.arr != null ? Number(c.arr) : undefined,
         mrr: c.mrr != null ? Number(c.mrr) : undefined,
         domains: Array.isArray(c.domains) ? c.domains : c.domain ? [c.domain] : undefined,
+        owner_id: ownerId ?? undefined, // only set when resolved
       };
       // Drop undefined keys so we never overwrite existing values with null.
       for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
@@ -284,7 +302,7 @@ serve(async () => {
     return {
       companies: {
         scanned: co.scanned, changed: co.changed.size,
-        inserted: coRes.inserted, updated: coRes.updated,
+        inserted: coRes.inserted, updated: coRes.updated, owned: companiesOwned,
         sortHonored: co.sortHonored, incremental: Boolean(since),
       },
       contacts: {
