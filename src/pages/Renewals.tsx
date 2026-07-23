@@ -47,17 +47,34 @@ export default function RenewalsPage() {
   const companyById = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
   const visibleIds = useMemo(() => new Set(companies.map((c) => c.id)), [companies]);
 
+  // Shared filter for a deal against the segment/owner/health/time controls.
+  const dealMatchesFilters = (d: Deal) => {
+    const c = companyById.get(d.companyId);
+    if (segFilter !== 'all' && c?.segment !== segFilter) return false;
+    if (ownerFilter !== 'all' && c?.ownerId !== ownerFilter) return false;
+    if (healthFilter !== 'all' && c?.healthBand !== healthFilter) return false;
+    if (!inWindow(d.closeDate ?? c?.renewalDate, timeFilter)) return false;
+    return true;
+  };
+
   const renewalDeals = useMemo(
-    () => allDeals.filter((d) => d.pipeline === 'renewal' && visibleIds.has(d.companyId)).filter((d) => {
-      const c = companyById.get(d.companyId);
-      if (segFilter !== 'all' && c?.segment !== segFilter) return false;
-      if (ownerFilter !== 'all' && c?.ownerId !== ownerFilter) return false;
-      if (healthFilter !== 'all' && c?.healthBand !== healthFilter) return false;
-      if (!inWindow(d.closeDate ?? c?.renewalDate, timeFilter)) return false;
-      return true;
-    }),
+    () => allDeals.filter((d) => d.pipeline === 'renewal' && visibleIds.has(d.companyId)).filter(dealMatchesFilters),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [allDeals, visibleIds, companyById, segFilter, ownerFilter, healthFilter, timeFilter]
   );
+
+  // The kanban is a general pipeline board: real Planhat opportunities aren't
+  // renewal-only (they come across as new_business/expansion with their own
+  // stages), so show every visible open/won deal grouped by its actual stage.
+  const boardDeals = useMemo(
+    () => allDeals.filter((d) => visibleIds.has(d.companyId) && d.status !== 'lost').filter(dealMatchesFilters),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allDeals, visibleIds, companyById, segFilter, ownerFilter, healthFilter, timeFilter]
+  );
+  const stageColumns = useMemo(() => {
+    const present = [...new Set(boardDeals.map((d) => d.stage).filter(Boolean))] as string[];
+    return present.length ? present.sort((a, b) => a.localeCompare(b)) : STAGE_ORDER;
+  }, [boardDeals]);
 
   const filteredCompanies = companies.filter((c) => {
     if (segFilter !== 'all' && c.segment !== segFilter) return false;
@@ -89,7 +106,7 @@ export default function RenewalsPage() {
     <div>
       <PageHeader
         title="Renewals"
-        subtitle={`${renewalDeals.length} open renewals · ${fmtCurrency(upForRenewal)} up for renewal`}
+        subtitle={`${boardDeals.length} open deals · ${renewalDeals.length} renewals · ${fmtCurrency(upForRenewal)} up for renewal`}
         actions={
           <div className="flex items-center gap-2">
             {isManager && (
@@ -130,8 +147,8 @@ export default function RenewalsPage() {
 
         {view === 'kanban' && (
           <div className="mb-4 flex gap-3 overflow-x-auto pb-2">
-            {STAGE_ORDER.map((stage) => {
-              const cards = renewalDeals.filter((d) => d.stage === stage);
+            {stageColumns.map((stage) => {
+              const cards = boardDeals.filter((d) => d.stage === stage);
               return (
                 <div key={stage} className="w-64 shrink-0">
                   <div className="mb-2 flex items-center justify-between px-1 text-sm font-medium">
@@ -156,7 +173,7 @@ export default function RenewalsPage() {
             })}
           </div>
         )}
-        {view === 'forecast' && <Forecast deals={renewalDeals} companyById={companyById} />}
+        {view === 'forecast' && <Forecast deals={boardDeals} companyById={companyById} />}
         {view === 'expansion' && <ExpansionHeatmap companies={filteredCompanies} />}
 
         {view !== 'expansion' && (
