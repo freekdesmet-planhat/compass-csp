@@ -21,9 +21,13 @@ import {
   insertPlaybookStepRow, updatePlaybookStepRow, deletePlaybookStepRow, reorderPlaybookStepsRows,
   fetchPlaybookRuns, fetchPlaybookRunSteps, insertPlaybookRunRow, insertPlaybookRunStepRow,
   updatePlaybookRunStepRow, archivePlaybookRunRow, insertPlaybookTaskRow, setTaskCompletedRow,
+  fetchAutomations, fetchAutomationSteps, fetchAutomationRuns,
+  insertAutomationRow, updateAutomationRow, deleteAutomationRow,
+  insertAutomationStepRow, updateAutomationStepRow, deleteAutomationStepRow,
 } from './realStore';
 import { planRun, reevaluateRun } from './playbookRunner';
 import { companyRuleContext } from './rules';
+import type { AutomationStarter } from './automationStarters';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS } from './segments';
@@ -34,6 +38,7 @@ import type {
   Notification, Product, CompanyProduct, CompanyProductStatus, LibraryItem, Dashboard,
   DashboardWidget, AskThread, AskMessage, ChangelogEntry,
   PlaybookTemplate, PlaybookGroup, PlaybookStep, PlaybookRun, PlaybookRunStep, RunStepState,
+  Automation, AutomationStep, AutomationRun,
 } from './types';
 
 // Visibility: which owner ids the current profile can see companies for.
@@ -868,4 +873,59 @@ export function usePlaybookRunMutations() {
   const archiveRun = useMutation({ mutationFn: async (runId: string) => { if (!isDemoMode) return archivePlaybookRunRow(runId); update('playbookRuns', runId, { status: 'archived', archivedAt: new Date().toISOString() }); }, onSuccess: inval });
 
   return { applyPlaybook, markStep, reevaluate, archiveRun };
+}
+
+// ── V2 Automations (iteration2.md Part B) ───────────────────────────────────
+export function useAutomations() {
+  return useQuery({ queryKey: ['automations'], queryFn: async () => (isDemoMode ? (all('automations') as Automation[]) : fetchAutomations()) });
+}
+export function useAutomationSteps(automationId?: string) {
+  return useQuery({
+    queryKey: ['automationSteps', automationId], enabled: !!automationId,
+    queryFn: async () => (isDemoMode ? (all('automationSteps') as AutomationStep[]).filter((s) => s.automationId === automationId).sort((a, b) => a.position - b.position) : fetchAutomationSteps(automationId!)),
+  });
+}
+export function useAutomationRuns(automationId?: string) {
+  return useQuery({
+    queryKey: ['automationRuns', automationId],
+    queryFn: async () => (isDemoMode ? (all('automationRuns') as AutomationRun[]).filter((r) => !automationId || r.automationId === automationId) : fetchAutomationRuns(automationId)),
+  });
+}
+export function useAutomationMutations() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  const inval = () => { qc.invalidateQueries({ queryKey: ['automations'] }); qc.invalidateQueries({ queryKey: ['automationSteps'] }); };
+
+  const createBlank = useMutation({
+    mutationFn: async (name: string) => {
+      if (!isDemoMode) return insertAutomationRow({ name, kind: 'templated', triggerModel: 'company', triggerFilter: { match: 'all', rules: [] } });
+      return insert('automations', { id: newId('au'), name, description: null, kind: 'templated', triggerType: 'record_created_or_updated', triggerModel: 'company', triggerFilter: { match: 'all', rules: [] }, triggerConfig: {}, enabled: false, createdBy: profile.id } as Automation);
+    }, onSuccess: inval,
+  });
+  const createFromStarter = useMutation({
+    mutationFn: async (s: AutomationStarter) => {
+      let auto: Automation;
+      if (!isDemoMode) auto = await insertAutomationRow({ name: s.name, description: s.description, kind: 'templated', triggerType: s.triggerType, triggerModel: s.triggerModel, triggerFilter: s.triggerFilter });
+      else auto = insert('automations', { id: newId('au'), name: s.name, description: s.description, kind: 'templated', triggerType: s.triggerType, triggerModel: s.triggerModel, triggerFilter: s.triggerFilter, triggerConfig: {}, enabled: false, createdBy: profile.id } as Automation);
+      await Promise.all(s.actions.map((a, i) => {
+        if (!isDemoMode) return insertAutomationStepRow({ automationId: auto.id, kind: a.kind, position: i, config: a.config });
+        insert('automationSteps', { id: newId('as'), automationId: auto.id, position: i, parentStepId: null, branch: null, kind: a.kind, config: a.config } as AutomationStep);
+        return Promise.resolve();
+      }));
+      return auto;
+    }, onSuccess: inval,
+  });
+  const updateAutomation = useMutation({ mutationFn: async ({ id, patch }: { id: string; patch: Partial<Automation> }) => (isDemoMode ? update('automations', id, patch) : updateAutomationRow(id, patch as Record<string, unknown>)), onSuccess: inval });
+  const deleteAutomation = useMutation({
+    mutationFn: async (id: string) => {
+      if (!isDemoMode) return deleteAutomationRow(id);
+      (all('automationSteps') as AutomationStep[]).filter((s) => s.automationId === id).forEach((s) => remove('automationSteps', s.id));
+      remove('automations', id);
+    }, onSuccess: inval,
+  });
+  const addStep = useMutation({ mutationFn: async (s: { automationId: string; kind: AutomationStep['kind']; position: number; config?: Record<string, unknown> }) => (isDemoMode ? insert('automationSteps', { id: newId('as'), automationId: s.automationId, position: s.position, parentStepId: null, branch: null, kind: s.kind, config: s.config ?? {} } as AutomationStep) : insertAutomationStepRow(s)), onSuccess: inval });
+  const updateStep = useMutation({ mutationFn: async ({ id, patch }: { id: string; patch: { kind?: string; config?: unknown; position?: number } }) => (isDemoMode ? update('automationSteps', id, patch as Partial<AutomationStep>) : updateAutomationStepRow(id, patch)), onSuccess: inval });
+  const deleteStep = useMutation({ mutationFn: async (id: string) => { if (!isDemoMode) return deleteAutomationStepRow(id); remove('automationSteps', id); }, onSuccess: inval });
+
+  return { createBlank, createFromStarter, updateAutomation, deleteAutomation, addStep, updateStep, deleteStep };
 }

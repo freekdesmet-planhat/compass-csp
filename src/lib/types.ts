@@ -636,3 +636,43 @@ export interface PlaybookRunStep {
   startDate?: string | null;
   dueDate?: string | null;
 }
+
+// ── V2 Automations (iteration2.md Part B) ───────────────────────────────────
+export type AutomationKind = 'templated' | 'custom';
+export type AutomationTriggerType = 'record_created' | 'record_updated' | 'record_created_or_updated' | 'schedule' | 'webhook' | 'manual';
+export type AutomationStepKind = 'condition' | 'wait' | 'get' | 'create_update' | 'webhook' | 'execute_function' | 'use_ai' | 'hitl' | 'notify';
+
+export interface Automation {
+  id: string;
+  name: string;
+  description?: string | null;
+  kind: AutomationKind;
+  triggerType: AutomationTriggerType;
+  triggerModel?: string | null;
+  triggerFilter: unknown;             // {match, rules[]}
+  triggerConfig: Record<string, unknown>;
+  enabled: boolean;
+  createdBy?: string | null;
+}
+export interface AutomationStep {
+  id: string;
+  automationId: string;
+  position: number;
+  parentStepId?: string | null;
+  branch?: 'true' | 'false' | null;
+  kind: AutomationStepKind;
+  config: Record<string, unknown>;
+}
+export interface AutomationRun {
+  id: string;
+  automationId: string;
+  triggerSource?: string | null;
+  companyId?: string | null;
+  status: string;                     // running|success|error|waiting|cancelled
+  trace: unknown[];
+  context: Record<string, unknown>;
+  waitingTaskId?: string | null;
+  error?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}

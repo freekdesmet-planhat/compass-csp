@@ -11,7 +11,7 @@ import type {
   Product, CompanyProduct, CompanyProductStatus, Notification, LibraryItem, Dashboard,
   DashboardWidget, AskThread, AskMessage, ChangelogEntry, ImportRun,
   PlaybookTemplate, PlaybookGroup, PlaybookStep, EmailTemplate, PlaybookType, PlaybookStepType,
-  PlaybookRun, PlaybookRunStep,
+  PlaybookRun, PlaybookRunStep, Automation, AutomationStep, AutomationRun,
 } from '../types';
 
 // ── seeded PRNG ──────────────────────────────────────────────────────────────
@@ -73,6 +73,9 @@ export interface DemoDataset {
   emailTemplates: EmailTemplate[];
   playbookRuns: PlaybookRun[];
   playbookRunSteps: PlaybookRunStep[];
+  automations: Automation[];
+  automationSteps: AutomationStep[];
+  automationRuns: AutomationRun[];
 }
 
 const FIRST = ['Sarah', 'James', 'Maria', 'David', 'Lena', 'Tom', 'Priya', 'Marcus', 'Elena', 'Yuki', 'Omar', 'Anna', 'Kevin', 'Sofia', 'Liam', 'Noah', 'Emma', 'Ava', 'Raj', 'Chloe'];
@@ -147,6 +150,7 @@ export function generateDemoData(): DemoDataset {
     dashboardWidgets: [], askThreads: [], askMessages: [], changelog: [], importRuns: [],
     playbookTemplates: [], playbookGroups: [], playbookSteps: [], emailTemplates: [],
     playbookRuns: [], playbookRunSteps: [],
+    automations: [], automationSteps: [], automationRuns: [],
   };
   seedPlaybooks(ds);
 

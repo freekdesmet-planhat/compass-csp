@@ -8,6 +8,7 @@ import type {
   SuccessPlan, SuccessPlanObjective, Alert, HealthSnapshot, Notification, Product,
   CompanyProduct, LibraryItem, Dashboard, DashboardWidget, AskThread, AskMessage,
   PlaybookTemplate, PlaybookGroup, PlaybookStep, PlaybookRun, PlaybookRunStep,
+  Automation, AutomationStep, AutomationRun,
 } from './types';
 
 function db() {
@@ -653,4 +654,58 @@ export async function insertPlaybookTaskRow(t: { companyId: string; title: strin
 }
 export async function setTaskCompletedRow(id: string, completed: boolean): Promise<void> {
   const { error } = await db().from('tasks').update({ completed_at: completed ? new Date().toISOString() : null }).eq('id', id); if (error) throw error;
+}
+
+// ── V2 Automations (RLS: read auth, write admin) ─────────────────────────────
+export function rowToAutomation(r: any): Automation {
+  return { id: r.id, name: r.name ?? '', description: r.description ?? null, kind: r.kind ?? 'templated', triggerType: r.trigger_type ?? 'record_created_or_updated', triggerModel: r.trigger_model ?? null, triggerFilter: r.trigger_filter ?? {}, triggerConfig: r.trigger_config ?? {}, enabled: r.enabled ?? false, createdBy: r.created_by ?? null };
+}
+export function rowToAutomationStep(r: any): AutomationStep {
+  return { id: r.id, automationId: r.automation_id, position: r.position ?? 0, parentStepId: r.parent_step_id ?? null, branch: r.branch ?? null, kind: r.kind, config: r.config ?? {} };
+}
+export function rowToAutomationRun(r: any): AutomationRun {
+  return { id: r.id, automationId: r.automation_id, triggerSource: r.trigger_source ?? null, companyId: r.company_id ?? null, status: r.status ?? 'running', trace: r.trace ?? [], context: r.context ?? {}, waitingTaskId: r.waiting_task_id ?? null, error: r.error ?? null, startedAt: r.started_at ?? null, finishedAt: r.finished_at ?? null };
+}
+export async function fetchAutomations(): Promise<Automation[]> {
+  const { data, error } = await db().from('automations').select('*').order('created_at', { ascending: false });
+  if (error) throw error; return (data ?? []).map(rowToAutomation);
+}
+export async function fetchAutomationSteps(automationId: string): Promise<AutomationStep[]> {
+  const { data, error } = await db().from('automation_steps').select('*').eq('automation_id', automationId).order('position');
+  if (error) throw error; return (data ?? []).map(rowToAutomationStep);
+}
+export async function fetchAutomationRuns(automationId?: string): Promise<AutomationRun[]> {
+  let q = db().from('automation_runs').select('*').order('started_at', { ascending: false }).limit(100);
+  if (automationId) q = q.eq('automation_id', automationId);
+  const { data, error } = await q;
+  if (error) throw error; return (data ?? []).map(rowToAutomationRun);
+}
+const AUTO_COLS: Record<string, string> = { name: 'name', description: 'description', kind: 'kind', triggerType: 'trigger_type', triggerModel: 'trigger_model', triggerFilter: 'trigger_filter', triggerConfig: 'trigger_config', enabled: 'enabled' };
+export async function insertAutomationRow(a: Partial<Automation> & { name: string }): Promise<Automation> {
+  const { data, error } = await db().from('automations').insert({ name: a.name, description: a.description ?? null, kind: a.kind ?? 'templated', trigger_type: a.triggerType ?? 'record_created_or_updated', trigger_model: a.triggerModel ?? 'company', trigger_filter: a.triggerFilter ?? {}, trigger_config: a.triggerConfig ?? {}, enabled: a.enabled ?? false }).select().single();
+  if (error) throw error; return rowToAutomation(data);
+}
+export async function updateAutomationRow(id: string, patch: Record<string, any>): Promise<Automation | null> {
+  const row: Record<string, any> = {}; for (const [k, v] of Object.entries(patch)) { const c = AUTO_COLS[k]; if (c) row[c] = v; }
+  const { data, error } = await db().from('automations').update(row).eq('id', id).select().maybeSingle();
+  if (error) throw error; return data ? rowToAutomation(data) : null;
+}
+export async function deleteAutomationRow(id: string): Promise<void> {
+  const { error } = await db().from('automations').delete().eq('id', id); if (error) throw error;
+}
+export async function insertAutomationStepRow(s: Partial<AutomationStep> & { automationId: string; kind: string; position: number }): Promise<AutomationStep> {
+  const { data, error } = await db().from('automation_steps').insert({ automation_id: s.automationId, position: s.position, parent_step_id: s.parentStepId ?? null, branch: s.branch ?? null, kind: s.kind, config: s.config ?? {} }).select().single();
+  if (error) throw error; return rowToAutomationStep(data);
+}
+export async function updateAutomationStepRow(id: string, patch: { position?: number; kind?: string; config?: unknown; branch?: string | null; parentStepId?: string | null }): Promise<void> {
+  const row: Record<string, any> = {};
+  if ('position' in patch) row.position = patch.position;
+  if ('kind' in patch) row.kind = patch.kind;
+  if ('config' in patch) row.config = patch.config;
+  if ('branch' in patch) row.branch = patch.branch;
+  if ('parentStepId' in patch) row.parent_step_id = patch.parentStepId;
+  const { error } = await db().from('automation_steps').update(row).eq('id', id); if (error) throw error;
+}
+export async function deleteAutomationStepRow(id: string): Promise<void> {
+  const { error } = await db().from('automation_steps').delete().eq('id', id); if (error) throw error;
 }

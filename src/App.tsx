@@ -17,6 +17,7 @@ import AskPage from './pages/Ask';
 import LibraryPage from './pages/Library';
 import ImportPage from './pages/Import';
 import PlaybooksPage from './pages/Playbooks';
+import AutomationsPage from './pages/Automations';
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/ask" element={<AskPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/playbooks" element={<PlaybooksPage />} />
+        <Route path="/automations" element={<AutomationsPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/company/:id" element={<AccountPage />} />
         <Route path="/renewals" element={<RenewalsPage />} />

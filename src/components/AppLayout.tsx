@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Home, LayoutGrid, Handshake, CheckSquare, Bell, Target, Users, Gauge, BarChart3,
   Settings, Shield, Compass, Search, ChevronsUpDown, MessageSquare, BookOpen,
-  PanelLeftClose, PanelLeftOpen, Upload, Workflow,
+  PanelLeftClose, PanelLeftOpen, Upload, Workflow, Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
@@ -71,6 +71,7 @@ export function AppLayout() {
     { to: '/contacts', label: 'Contacts', icon: Users },
     { to: '/nps', label: 'NPS & CSAT', icon: Gauge },
     { to: '/playbooks', label: 'Playbooks', icon: Workflow },
+    { to: '/automations', label: 'Automations', icon: Zap, roles: ['admin'] },
     { to: '/library', label: 'Library', icon: BookOpen },
     { to: '/reports', label: 'Reports', icon: BarChart3 },
   ];
