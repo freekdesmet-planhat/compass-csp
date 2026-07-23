@@ -598,6 +598,8 @@ export interface PlaybookStep {
   workdaysOnly: boolean;
   dependsOnStepId?: string | null;
   dependencyTrigger?: PlaybookDependency | null;
+  stepCondition?: unknown;
+  stepConditionDisplay?: 'hidden' | 'muted';
   // email-step fields
   sendWhen?: string | null;
   emailTemplateId?: string | null;

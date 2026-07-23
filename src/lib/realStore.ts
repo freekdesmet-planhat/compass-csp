@@ -553,7 +553,7 @@ export function rowToPlaybookGroup(r: any): PlaybookGroup {
   return { id: r.id, templateId: r.template_id, name: r.name ?? null, position: r.position ?? 0, groupCondition: r.group_condition ?? {}, expireBehavior: r.expire_behavior ?? 'keep' };
 }
 export function rowToPlaybookStep(r: any): PlaybookStep {
-  return { id: r.id, templateId: r.template_id, groupId: r.group_id ?? null, position: r.position ?? 0, stepType: r.step_type ?? 'task', title: r.title ?? null, description: r.description ?? null, priority: r.default_priority ?? null, ownerRef: r.owner_ref ?? { kind: 'role', value: 'account_owner' }, conversationType: r.conversation_type ?? null, checklist: r.checklist ?? [], attachments: r.attachments ?? [], customerVisible: r.customer_visible ?? false, startAfterDays: r.start_after_days ?? 0, durationDays: r.duration_days ?? null, workdaysOnly: r.workdays_only ?? true, dependsOnStepId: r.depends_on_step_id ?? null, dependencyTrigger: r.dependency_trigger ?? null, sendWhen: r.send_when ?? null, emailTemplateId: r.email_template_id ?? null, subject: r.subject ?? null, body: r.body ?? null };
+  return { id: r.id, templateId: r.template_id, groupId: r.group_id ?? null, position: r.position ?? 0, stepType: r.step_type ?? 'task', title: r.title ?? null, description: r.description ?? null, priority: r.default_priority ?? null, ownerRef: r.owner_ref ?? { kind: 'role', value: 'account_owner' }, conversationType: r.conversation_type ?? null, checklist: r.checklist ?? [], attachments: r.attachments ?? [], customerVisible: r.customer_visible ?? false, startAfterDays: r.start_after_days ?? 0, durationDays: r.duration_days ?? null, workdaysOnly: r.workdays_only ?? true, dependsOnStepId: r.depends_on_step_id ?? null, dependencyTrigger: r.dependency_trigger ?? null, stepCondition: r.step_condition ?? null, stepConditionDisplay: r.step_condition_display ?? 'hidden', sendWhen: r.send_when ?? null, emailTemplateId: r.email_template_id ?? null, subject: r.subject ?? null, body: r.body ?? null };
 }
 
 export async function fetchPlaybookTemplates(): Promise<PlaybookTemplate[]> {
@@ -586,14 +586,18 @@ export async function insertPlaybookGroupRow(g: { templateId: string; name?: str
   const { data, error } = await db().from('playbook_groups').insert({ template_id: g.templateId, name: g.name ?? 'New group', position: g.position }).select().single();
   if (error) throw error; return rowToPlaybookGroup(data);
 }
-export async function updatePlaybookGroupRow(id: string, patch: { name?: string | null; position?: number; expireBehavior?: string }): Promise<void> {
-  const row: Record<string, any> = {}; if ('name' in patch) row.name = patch.name; if ('position' in patch) row.position = patch.position; if ('expireBehavior' in patch) row.expire_behavior = patch.expireBehavior;
+export async function updatePlaybookGroupRow(id: string, patch: { name?: string | null; position?: number; expireBehavior?: string; groupCondition?: unknown }): Promise<void> {
+  const row: Record<string, any> = {};
+  if ('name' in patch) row.name = patch.name;
+  if ('position' in patch) row.position = patch.position;
+  if ('expireBehavior' in patch) row.expire_behavior = patch.expireBehavior;
+  if ('groupCondition' in patch) row.group_condition = patch.groupCondition;
   const { error } = await db().from('playbook_groups').update(row).eq('id', id); if (error) throw error;
 }
 export async function deletePlaybookGroupRow(id: string): Promise<void> {
   const { error } = await db().from('playbook_groups').delete().eq('id', id); if (error) throw error;
 }
-const PB_STEP_COLS: Record<string, string> = { groupId: 'group_id', position: 'position', stepType: 'step_type', title: 'title', description: 'description', priority: 'default_priority', ownerRef: 'owner_ref', conversationType: 'conversation_type', checklist: 'checklist', attachments: 'attachments', customerVisible: 'customer_visible', startAfterDays: 'start_after_days', durationDays: 'duration_days', workdaysOnly: 'workdays_only', dependsOnStepId: 'depends_on_step_id', dependencyTrigger: 'dependency_trigger', sendWhen: 'send_when', emailTemplateId: 'email_template_id', subject: 'subject', body: 'body' };
+const PB_STEP_COLS: Record<string, string> = { groupId: 'group_id', position: 'position', stepType: 'step_type', title: 'title', description: 'description', priority: 'default_priority', ownerRef: 'owner_ref', conversationType: 'conversation_type', checklist: 'checklist', attachments: 'attachments', customerVisible: 'customer_visible', startAfterDays: 'start_after_days', durationDays: 'duration_days', workdaysOnly: 'workdays_only', dependsOnStepId: 'depends_on_step_id', dependencyTrigger: 'dependency_trigger', stepCondition: 'step_condition', stepConditionDisplay: 'step_condition_display', sendWhen: 'send_when', emailTemplateId: 'email_template_id', subject: 'subject', body: 'body' };
 export async function insertPlaybookStepRow(s: Partial<PlaybookStep> & { templateId: string; groupId: string | null; position: number }): Promise<PlaybookStep> {
   const { data, error } = await db().from('playbook_template_steps').insert({ template_id: s.templateId, group_id: s.groupId, position: s.position, step_type: s.stepType ?? 'task', title: s.title ?? 'New step', default_priority: s.priority ?? 'normal', owner_ref: s.ownerRef ?? { kind: 'role', value: 'account_owner' }, start_after_days: s.startAfterDays ?? 0, workdays_only: s.workdaysOnly ?? true }).select().single();
   if (error) throw error; return rowToPlaybookStep(data);

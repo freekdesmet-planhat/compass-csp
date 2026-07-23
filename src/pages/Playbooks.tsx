@@ -6,7 +6,9 @@ import { PageHeader, PageBody } from '@/components/PageHeader';
 import { Card, CardBody, Button, Chip, EmptyState, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Switch } from '@/components/ui';
 import { useSession } from '@/lib/session';
 import { usePlaybookTemplates, usePlaybookGroups, usePlaybookSteps, usePlaybookMutations } from '@/lib/hooks';
-import { Workflow, Plus, GripVertical, Trash2, ChevronLeft, Mail, CheckSquare, Layers } from 'lucide-react';
+import { RuleBuilder } from '@/components/RuleBuilder';
+import { isEmptyRuleGroup } from '@/lib/rules';
+import { Workflow, Plus, GripVertical, Trash2, ChevronLeft, Mail, CheckSquare, Layers, Filter } from 'lucide-react';
 import type { PlaybookTemplate, PlaybookGroup, PlaybookStep } from '@/lib/types';
 
 export default function PlaybooksPage() {
@@ -139,6 +141,29 @@ function Builder({ templateId, onBack }: { templateId: string; onBack: () => voi
 
         {!canEdit && <Card className="mb-3"><CardBody className="py-2 text-sm text-muted-foreground">Read-only — managers and admins can edit playbooks.</CardBody></Card>}
 
+        {/* Entry / exit criteria (§5) */}
+        <Card className="mb-4">
+          <CardBody className="space-y-4">
+            <div>
+              <div className="mb-1.5 flex items-center gap-2 text-sm font-medium"><Filter className="h-3.5 w-3.5 text-muted-foreground" /> Entry criteria
+                <span className="text-xs font-normal text-muted-foreground">— auto-apply when a {template.targetModel.replace('_', ' ')} matches</span></div>
+              <RuleBuilder value={template.entryCriteria} disabled={!canEdit} onChange={(v) => m.updateTemplate.mutate({ id: template.id, patch: { entryCriteria: v } })} />
+            </div>
+            <div className="border-t pt-3">
+              <div className="mb-1.5 flex flex-wrap items-center gap-2 text-sm font-medium"><Filter className="h-3.5 w-3.5 text-muted-foreground" /> Exit criteria
+                <span className="text-xs font-normal text-muted-foreground">— auto-archive when matched</span>
+                <div className="flex-1" />
+                <span className="text-xs font-normal text-muted-foreground">Remaining steps:</span>
+                <Select value={template.exitArchiveAction} onValueChange={(v) => canEdit && m.updateTemplate.mutate({ id: template.id, patch: { exitArchiveAction: v as PlaybookTemplate['exitArchiveAction'] } })}>
+                  <SelectTrigger className="h-7 w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="keep_remaining">Keep remaining</SelectItem><SelectItem value="cancel_remaining">Cancel remaining</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <RuleBuilder value={template.exitCriteria} disabled={!canEdit} onChange={(v) => m.updateTemplate.mutate({ id: template.id, patch: { exitCriteria: v } })} />
+            </div>
+          </CardBody>
+        </Card>
+
         <div className="space-y-4">
           {groups.map((g) => (
             <GroupSection key={g.id} group={g} steps={stepsByGroup.get(g.id) ?? []} canEdit={canEdit} m={m} templateId={templateId}
@@ -164,6 +189,8 @@ function GroupSection({ group, steps, canEdit, m, templateId, dragId, setDragId,
   dragId: string | null; setDragId: (id: string | null) => void; onDropOnStep: (id: string) => void; onDropOnGroup: () => void;
   editingId: string | null; setEditingId: (id: string | null) => void; allSteps: PlaybookStep[];
 }) {
+  const [showCond, setShowCond] = useState(false);
+  const hasCond = group ? !isEmptyRuleGroup(group.groupCondition) : false;
   return (
     <Card onDragOver={(e) => e.preventDefault()} onDrop={onDropOnGroup}>
       <CardBody>
@@ -173,8 +200,21 @@ function GroupSection({ group, steps, canEdit, m, templateId, dragId, setDragId,
             : <span className="font-medium text-muted-foreground">Ungrouped</span>}
           <span className="text-xs text-muted-foreground">{steps.length} steps</span>
           <div className="flex-1" />
+          {group && <button title="Group condition" onClick={() => setShowCond((s) => !s)} className={`flex items-center gap-1 rounded px-1.5 py-1 text-xs hover:bg-panel ${hasCond ? 'text-[var(--accent)]' : 'text-muted-foreground'}`}><Filter className="h-3.5 w-3.5" />{hasCond && <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />}</button>}
           {canEdit && group && <button title="Delete group" onClick={() => m.deleteGroup.mutate(group.id)} className="rounded p-1 text-muted-foreground hover:bg-panel hover:text-[var(--red)]"><Trash2 className="h-3.5 w-3.5" /></button>}
         </div>
+        {group && showCond && (
+          <div className="mb-2 rounded-md border bg-panel/40 p-3">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs font-medium">Group condition <span className="font-normal text-muted-foreground">— activate/deactivate this group's steps</span>
+              <div className="flex-1" />
+              <Select value={group.expireBehavior} onValueChange={(v) => canEdit && m.updateGroup.mutate({ id: group.id, patch: { expireBehavior: v } })}>
+                <SelectTrigger className="h-7 w-52"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="keep">Keep steps when unmatched</SelectItem><SelectItem value="expire">Expire steps when unmatched</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <RuleBuilder value={group.groupCondition} disabled={!canEdit} onChange={(v) => m.updateGroup.mutate({ id: group.id, patch: { groupCondition: v } })} />
+          </div>
+        )}
         <div className="space-y-1.5">
           {steps.map((s) => (
             <StepRow key={s.id} step={s} canEdit={canEdit} m={m} dragId={dragId} setDragId={setDragId} onDropOnStep={onDropOnStep}
@@ -255,6 +295,18 @@ function StepRow({ step, canEdit, m, dragId, setDragId, onDropOnStep, editing, s
             <textarea value={step.description ?? ''} disabled={!canEdit} onChange={(e) => set({ description: e.target.value })} rows={2}
               placeholder="Instructions for whoever completes this step…" className="w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-[var(--accent)]" />
           </Field>
+          <div className="border-t pt-3 sm:col-span-2 lg:col-span-3">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs font-medium">Step condition
+              <span className="font-normal text-muted-foreground">— turns this step on when matched (never off again)</span>
+              <div className="flex-1" />
+              <span className="font-normal text-muted-foreground">Before active:</span>
+              <Select value={step.stepConditionDisplay ?? 'hidden'} onValueChange={(v) => set({ stepConditionDisplay: v as 'hidden' | 'muted' })} disabled={!canEdit}>
+                <SelectTrigger className="h-7 w-24"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="hidden">Hidden</SelectItem><SelectItem value="muted">Muted</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <RuleBuilder value={step.stepCondition} disabled={!canEdit} onChange={(v) => set({ stepCondition: v })} />
+          </div>
         </div>
       )}
     </div>
