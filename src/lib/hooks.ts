@@ -6,6 +6,8 @@ import {
   updateContactRow, insertTaskRow,
   fetchActivities, fetchDeals, fetchTasks, fetchNps, fetchUsageMetrics,
   fetchSuccessPlans, fetchObjectives,
+  insertActivityRow, insertDealRow, insertSuccessPlanRow, insertObjectiveRows,
+  updateObjectiveRow, updateSuccessPlanRow,
 } from './realStore';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
@@ -306,12 +308,18 @@ export function useLogActivity() {
   const qc = useQueryClient();
   const { profile } = useSession();
   return useMutation({
-    mutationFn: async (a: Partial<Activity> & { companyId: string; type: Activity['type']; title: string }) =>
-      insert('activities', {
+    mutationFn: async (a: Partial<Activity> & { companyId: string; type: Activity['type']; title: string }) => {
+      if (!isDemoMode) return insertActivityRow({
+        companyId: a.companyId, contactIds: a.contactIds ?? [], userId: profile.id, type: a.type,
+        direction: a.direction ?? null, title: a.title, snippet: a.snippet ?? '',
+        occurredAt: a.occurredAt ?? new Date().toISOString(), meta: a.meta ?? {},
+      });
+      return insert('activities', {
         id: newId('ac'), companyId: a.companyId, contactIds: a.contactIds ?? [], userId: profile.id,
         type: a.type, direction: a.direction ?? null, title: a.title, snippet: a.snippet ?? '',
         occurredAt: a.occurredAt ?? new Date().toISOString(), meta: a.meta ?? {},
-      } as Activity),
+      } as Activity);
+    },
     onSuccess: (_r, v) => {
       qc.invalidateQueries({ queryKey: ['activities', v.companyId] });
       qc.invalidateQueries({ queryKey: ['activities', undefined] });
@@ -340,6 +348,23 @@ export function useUpdateObjective() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<SuccessPlanObjective> }) => {
+      if (!isDemoMode) {
+        const o = await updateObjectiveRow(id, patch as Record<string, unknown>);
+        if (o) {
+          // recompute plan progress from the (now-updated) objective statuses
+          const objs = await fetchObjectives(o.companyId, o.planId);
+          const score = objs.reduce((a, x) => a + (x.status === 'achieved' ? 1 : x.status === 'on_track' ? 0.5 : x.status === 'at_risk' ? 0.25 : 0), 0);
+          await updateSuccessPlanRow(o.planId, { progressPct: Math.round((score / (objs.length || 1)) * 100) });
+          if (patch.status) {
+            await insertActivityRow({
+              companyId: o.companyId, contactIds: [], userId: profile.id, type: 'system',
+              title: `Objective "${o.title}" → ${String(patch.status).replace(/_/g, ' ')}`, snippet: `Status changed by ${profile.fullName}`,
+              occurredAt: new Date().toISOString(), meta: {},
+            });
+          }
+        }
+        return o;
+      }
       const before = (all('objectives') as SuccessPlanObjective[]).find((x) => x.id === id);
       const o = update('objectives', id, patch);
       // recompute plan progress from objective statuses
@@ -374,6 +399,13 @@ export function useCreateSuccessPlan() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async (p: { companyId: string; name: string; ownerId?: string; targetDate?: string | null; objectives?: string[] }) => {
+      if (!isDemoMode) {
+        const plan = await insertSuccessPlanRow({ companyId: p.companyId, name: p.name, ownerId: p.ownerId ?? profile.id, status: 'active', targetDate: p.targetDate ?? null, progressPct: 0 });
+        const titles = (p.objectives ?? []).filter((t) => t.trim());
+        await insertObjectiveRows(titles.map((title, i) => ({ planId: plan.id, companyId: p.companyId, title, targetDate: p.targetDate ?? null, status: 'not_started', position: i })));
+        await insertActivityRow({ companyId: p.companyId, contactIds: [], userId: profile.id, type: 'system', title: `Success plan "${p.name}" created`, snippet: `by ${profile.fullName}`, occurredAt: new Date().toISOString(), meta: {} });
+        return plan;
+      }
       const planId = newId('sp');
       const plan = insert('successPlans', {
         id: planId, companyId: p.companyId, name: p.name, ownerId: p.ownerId ?? profile.id,
@@ -471,14 +503,20 @@ export function useCreateDeal() {
   const qc = useQueryClient();
   const { profile } = useSession();
   return useMutation({
-    mutationFn: async (d: Partial<Deal> & { companyId: string; name: string }) =>
-      insert('deals', {
+    mutationFn: async (d: Partial<Deal> & { companyId: string; name: string }) => {
+      if (!isDemoMode) return insertDealRow({
+        companyId: d.companyId, name: d.name, pipeline: d.pipeline ?? 'expansion', stage: d.stage ?? 'Discovery',
+        stageProbability: 0.3, forecastCategory: 'pipeline', amount: d.amount ?? null, currency: 'USD',
+        closeDate: d.closeDate ?? null, ownerId: profile.id, status: 'open', confidence: 40, qualification: {}, contactIds: [],
+      });
+      return insert('deals', {
         id: newId('dl'), companyId: d.companyId, hubspotDealId: null, pipeline: d.pipeline ?? 'expansion',
         stage: d.stage ?? 'Discovery', stageProbability: 0.3, forecastCategory: 'pipeline',
         name: d.name, amount: d.amount ?? null, currency: 'USD', closeDate: d.closeDate ?? null,
         ownerId: profile.id, status: 'open', nextSteps: null, aiSummary: null, confidence: 40,
         qualification: {}, suggestedStage: null, suggestedStageReason: null, contactIds: [], lastSyncedAt: null,
-      } as Deal),
+      } as Deal);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['deals'] }),
   });
 }

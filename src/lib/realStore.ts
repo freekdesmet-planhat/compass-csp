@@ -213,3 +213,73 @@ export async function fetchObjectives(companyId?: string, planId?: string): Prom
   });
   return rows.map(rowToObjective);
 }
+
+// ── Phase 2 write-path: real inserts/updates for the UI mutations. camelCase →
+//    snake_case; returns the mapped row. RLS's WITH CHECK gates by company. ────
+export async function insertActivityRow(a: {
+  companyId: string; contactIds?: string[]; userId?: string | null; type: string;
+  direction?: string | null; title: string; snippet?: string | null; occurredAt?: string; meta?: Record<string, unknown>;
+}): Promise<Activity> {
+  const { data, error } = await db().from('activities').insert({
+    company_id: a.companyId, contact_ids: a.contactIds ?? [], user_id: a.userId ?? null,
+    type: a.type, direction: a.direction ?? null, title: a.title, snippet: a.snippet ?? null,
+    occurred_at: a.occurredAt ?? new Date().toISOString(), meta: a.meta ?? {},
+  }).select().single();
+  if (error) throw error;
+  return rowToActivity(data);
+}
+
+export async function insertDealRow(d: Partial<Deal> & { companyId: string; name: string }): Promise<Deal> {
+  const { data, error } = await db().from('deals').insert({
+    company_id: d.companyId, name: d.name, pipeline: d.pipeline ?? 'expansion', stage: d.stage ?? null,
+    stage_probability: d.stageProbability ?? null, forecast_category: d.forecastCategory ?? 'pipeline',
+    amount: d.amount ?? null, currency: d.currency ?? 'USD', close_date: d.closeDate ?? null,
+    owner_id: d.ownerId ?? null, status: d.status ?? 'open', next_steps: d.nextSteps ?? null,
+    ai_summary: d.aiSummary ?? null, confidence: d.confidence ?? null, qualification: d.qualification ?? {},
+    contact_ids: d.contactIds ?? [],
+  }).select().single();
+  if (error) throw error;
+  return rowToDeal(data);
+}
+
+export async function insertSuccessPlanRow(p: Partial<SuccessPlan> & { companyId: string; name: string }): Promise<SuccessPlan> {
+  const { data, error } = await db().from('success_plans').insert({
+    company_id: p.companyId, name: p.name, owner_id: p.ownerId ?? null, status: p.status ?? 'active',
+    target_date: p.targetDate ?? null, progress_pct: p.progressPct ?? 0,
+  }).select().single();
+  if (error) throw error;
+  return rowToSuccessPlan(data);
+}
+
+export async function insertObjectiveRows(rows: (Partial<SuccessPlanObjective> & { planId: string; companyId: string; title: string; position: number })[]): Promise<void> {
+  if (!rows.length) return;
+  const { error } = await db().from('success_plan_objectives').insert(rows.map((o) => ({
+    plan_id: o.planId, company_id: o.companyId, title: o.title, business_outcome: o.businessOutcome ?? null,
+    metric: o.metric ?? null, target_date: o.targetDate ?? null, status: o.status ?? 'not_started',
+    position: o.position, notes: o.notes ?? null,
+  })));
+  if (error) throw error;
+}
+
+const OBJECTIVE_COLS: Record<string, string> = {
+  title: 'title', businessOutcome: 'business_outcome', metric: 'metric', targetDate: 'target_date',
+  status: 'status', position: 'position', notes: 'notes',
+};
+export async function updateObjectiveRow(id: string, patch: Record<string, any>): Promise<SuccessPlanObjective | null> {
+  const row: Record<string, any> = {};
+  for (const [k, v] of Object.entries(patch)) { const col = OBJECTIVE_COLS[k]; if (col) row[col] = v; }
+  const { data, error } = await db().from('success_plan_objectives').update(row).eq('id', id).select().maybeSingle();
+  if (error) throw error;
+  return data ? rowToObjective(data) : null;
+}
+
+const PLAN_COLS: Record<string, string> = {
+  name: 'name', ownerId: 'owner_id', status: 'status', targetDate: 'target_date', progressPct: 'progress_pct',
+};
+export async function updateSuccessPlanRow(id: string, patch: Record<string, any>): Promise<SuccessPlan | null> {
+  const row: Record<string, any> = {};
+  for (const [k, v] of Object.entries(patch)) { const col = PLAN_COLS[k]; if (col) row[col] = v; }
+  const { data, error } = await db().from('success_plans').update(row).eq('id', id).select().maybeSingle();
+  if (error) throw error;
+  return data ? rowToSuccessPlan(data) : null;
+}
