@@ -100,6 +100,32 @@ export async function fetchContact(id: string): Promise<Contact | null> {
   if (error) throw error;
   return data ? rowToContact(data) : null;
 }
+
+// ── global search (⌘K palette). RLS scopes results; sanitise the term so it
+//    can't break PostgREST filter syntax. ──────────────────────────────────────
+const sanitize = (q: string) => q.replace(/[,()%*\\]/g, ' ').trim();
+export async function searchCompanies(q: string): Promise<Company[]> {
+  const s = sanitize(q);
+  let query = db().from('companies').select('*').order('name').limit(6);
+  if (s) query = query.ilike('name', `%${s}%`);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map(rowToCompany);
+}
+export async function searchContacts(q: string): Promise<Contact[]> {
+  const s = sanitize(q);
+  if (!s) return [];
+  const { data, error } = await db().from('contacts').select('*').or(`first_name.ilike.%${s}%,last_name.ilike.%${s}%,email.ilike.%${s}%`).limit(5);
+  if (error) throw error;
+  return (data ?? []).map(rowToContact);
+}
+export async function searchDeals(q: string): Promise<Deal[]> {
+  const s = sanitize(q);
+  if (!s) return [];
+  const { data, error } = await db().from('deals').select('*').ilike('name', `%${s}%`).limit(4);
+  if (error) throw error;
+  return (data ?? []).map(rowToDeal);
+}
 export async function fetchProfiles(): Promise<Profile[]> {
   const { data, error } = await db().from('profiles').select('*').order('full_name');
   if (error) throw error;

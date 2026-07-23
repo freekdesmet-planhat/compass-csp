@@ -4,12 +4,15 @@ import { useEffect, useState } from 'react';
 import { Command } from 'cmdk';
 import { useNavigate } from 'react-router-dom';
 import { getDb } from '@/lib/store';
+import { isDemoMode } from '@/lib/supabase';
+import { searchCompanies, searchContacts, searchDeals } from '@/lib/realStore';
 import { Building2, User, Handshake, FileText, CheckSquare, StickyNote, Compass, Upload, Workflow } from 'lucide-react';
 import type { Company, Contact, Deal, Activity } from '@/lib/types';
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [results, setResults] = useState<{ companies: Company[]; contacts: Contact[]; deals: Deal[]; notes: Activity[] }>({ companies: [], contacts: [], deals: [], notes: [] });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -23,17 +26,36 @@ export function CommandPalette() {
     return () => document.removeEventListener('keydown', down);
   }, []);
 
-  const db = getDb();
-  const q = query.toLowerCase();
-  const companies = q ? (db.companies as Company[]).filter((c) => c.name.toLowerCase().includes(q)).slice(0, 6) : (db.companies as Company[]).slice(0, 5);
-  const contacts = q ? (db.contacts as Contact[]).filter((c) => `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q)).slice(0, 5) : [];
-  const deals = q ? (db.deals as Deal[]).filter((d) => d.name.toLowerCase().includes(q)).slice(0, 4) : [];
-  const notes = q ? (db.activities as Activity[]).filter((a) => a.type === 'note' && (a.title.toLowerCase().includes(q) || a.snippet?.toLowerCase().includes(q))).slice(0, 4) : [];
+  // Compute results per mode: demo filters the in-browser store; real mode queries
+  // Supabase (RLS-scoped) with a short debounce.
+  useEffect(() => {
+    if (!open) return;
+    const q = query.toLowerCase();
+    if (isDemoMode) {
+      const db = getDb();
+      setResults({
+        companies: q ? (db.companies as Company[]).filter((c) => c.name.toLowerCase().includes(q)).slice(0, 6) : (db.companies as Company[]).slice(0, 5),
+        contacts: q ? (db.contacts as Contact[]).filter((c) => `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q)).slice(0, 5) : [],
+        deals: q ? (db.deals as Deal[]).filter((d) => d.name.toLowerCase().includes(q)).slice(0, 4) : [],
+        notes: q ? (db.activities as Activity[]).filter((a) => a.type === 'note' && (a.title.toLowerCase().includes(q) || a.snippet?.toLowerCase().includes(q))).slice(0, 4) : [],
+      });
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const [companies, contacts, deals] = await Promise.all([searchCompanies(query), searchContacts(query), searchDeals(query)]);
+        if (!cancelled) setResults({ companies, contacts, deals, notes: [] });
+      } catch { if (!cancelled) setResults({ companies: [], contacts: [], deals: [], notes: [] }); }
+    }, 150);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query, open]);
 
+  const { companies, contacts, deals, notes } = results;
   const go = (path: string) => { setOpen(false); setQuery(''); navigate(path); };
 
   return (
-    <Command.Dialog open={open} onOpenChange={setOpen} label="Command palette" overlayClassName="fixed inset-0 z-[99] bg-black/20 backdrop-blur-sm motion-reduce:transition-none" className="fixed left-1/2 top-[18%] z-[100] w-full max-w-xl -translate-x-1/2 overflow-hidden rounded-lg border bg-white shadow-popover">
+    <Command.Dialog open={open} onOpenChange={setOpen} shouldFilter={false} label="Command palette" overlayClassName="fixed inset-0 z-[99] bg-black/20 backdrop-blur-sm motion-reduce:transition-none" className="fixed left-1/2 top-[18%] z-[100] w-full max-w-xl -translate-x-1/2 overflow-hidden rounded-lg border bg-white shadow-popover">
       <div className="flex items-center gap-2 border-b px-3">
         <Compass className="h-4 w-4 text-muted-foreground" />
         <Command.Input value={query} onValueChange={setQuery} placeholder="Search companies, contacts, deals, notes — or run a command…" className="h-11 w-full bg-transparent text-base outline-none placeholder:text-muted-foreground" />
@@ -41,13 +63,15 @@ export function CommandPalette() {
       <Command.List className="max-h-[380px] overflow-y-auto p-1.5">
         <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">No results.</Command.Empty>
 
-        <Command.Group heading="Quick actions" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-muted-foreground">
-          <Item icon={CheckSquare} label="Create task" onSelect={() => go('/tasks')} />
-          <Item icon={StickyNote} label="Log a note" onSelect={() => go('/portfolio')} />
-          <Item icon={Upload} label="Import CSV" hint="companies · contacts · usage" onSelect={() => go('/import')} />
-          <Item icon={Workflow} label="View playbooks" onSelect={() => go('/playbooks')} />
-          <Item icon={Handshake} label="Go to Renewals" onSelect={() => go('/renewals')} />
-        </Command.Group>
+        {!query && (
+          <Command.Group heading="Quick actions" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-muted-foreground">
+            <Item icon={CheckSquare} label="Create task" onSelect={() => go('/tasks')} />
+            <Item icon={StickyNote} label="Log a note" onSelect={() => go('/portfolio')} />
+            <Item icon={Upload} label="Import CSV" hint="companies · contacts · usage" onSelect={() => go('/import')} />
+            <Item icon={Workflow} label="View playbooks" onSelect={() => go('/playbooks')} />
+            <Item icon={Handshake} label="Go to Renewals" onSelect={() => go('/renewals')} />
+          </Command.Group>
+        )}
 
         {companies.length > 0 && (
           <Command.Group heading="Companies" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-muted-foreground">

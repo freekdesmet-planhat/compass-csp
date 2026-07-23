@@ -17,14 +17,22 @@ import { Gauge, Plus } from 'lucide-react';
 // scripts/migrate-planhat.ts, migrated responses now land. Demo mode always had
 // data. A proper page-level empty state + manual "Log NPS response" cover the gap.
 
-// NOTE on scale: in this dataset an NPS response `score` is stored on a
-// -100..100 point scale (Planhat-style relative NPS), not raw 0–10. So we
-// bucket: promoter ≥ 50, detractor < 0, passive in between, and headline NPS =
-// mean of scores. CSAT is a 1–5 satisfaction rating.
-function bucket(score: number): 'promoter' | 'passive' | 'detractor' {
-  if (score >= 50) return 'promoter';
-  if (score < 0) return 'detractor';
-  return 'passive';
+// NOTE on scale: two datasets, two scales. Demo uses a -100..100 relative-NPS
+// per response; live Planhat (`nps` field) uses the standard 0–10 scale. Detect
+// the scale from the data and bucket/aggregate accordingly:
+//   relative (-100..100): promoter ≥ 50, detractor < 0; headline = mean of scores.
+//   standard (0–10):      promoter 9–10, passive 7–8, detractor ≤ 6; headline =
+//                         %promoters − %detractors (true NPS, -100..100).
+// CSAT is a 1–5 satisfaction rating.
+function bucket(score: number, relative: boolean): 'promoter' | 'passive' | 'detractor' {
+  if (relative) return score >= 50 ? 'promoter' : score < 0 ? 'detractor' : 'passive';
+  return score >= 9 ? 'promoter' : score >= 7 ? 'passive' : 'detractor';
+}
+function npsIndex(scores: number[], relative: boolean): number {
+  if (!scores.length) return 0;
+  if (relative) return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+  const p = scores.filter((s) => s >= 9).length, d = scores.filter((s) => s <= 6).length;
+  return Math.round(((p - d) / scores.length) * 100);
 }
 
 export default function NpsPage() {
@@ -41,10 +49,11 @@ export default function NpsPage() {
   const nps = useMemo(() => allNps.filter((n) => visibleIds.has(n.companyId)).sort((a, b) => +new Date(b.respondedAt) - +new Date(a.respondedAt)), [allNps, visibleIds]);
   const csat = useMemo(() => allCsat.filter((c) => visibleIds.has(c.companyId)).sort((a, b) => +new Date(b.respondedAt) - +new Date(a.respondedAt)), [allCsat, visibleIds]);
 
-  const promoters = nps.filter((n) => bucket(n.score) === 'promoter').length;
-  const passives = nps.filter((n) => bucket(n.score) === 'passive').length;
-  const detractors = nps.filter((n) => bucket(n.score) === 'detractor').length;
-  const headlineNps = nps.length ? Math.round(nps.reduce((a, n) => a + n.score, 0) / nps.length) : 0;
+  const relative = useMemo(() => nps.some((n) => n.score < 0 || n.score > 10), [nps]);
+  const promoters = nps.filter((n) => bucket(n.score, relative) === 'promoter').length;
+  const passives = nps.filter((n) => bucket(n.score, relative) === 'passive').length;
+  const detractors = nps.filter((n) => bucket(n.score, relative) === 'detractor').length;
+  const headlineNps = npsIndex(nps.map((n) => n.score), relative);
   const avgCsat = csat.length ? (csat.reduce((a, c) => a + c.score, 0) / csat.length).toFixed(1) : '—';
 
   // Monthly trend
@@ -55,8 +64,8 @@ export default function NpsPage() {
       const m = n.respondedAt.slice(0, 7);
       (byMonth.get(m) ?? byMonth.set(m, []).get(m)!).push(n.score);
     }
-    return [...byMonth.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([m, scores]) => ({ month: m, nps: Math.round(scores.reduce((x, y) => x + y, 0) / scores.length) }));
-  }, [nps]);
+    return [...byMonth.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([m, scores]) => ({ month: m, nps: npsIndex(scores, relative) }));
+  }, [nps, relative]);
 
   // Per-segment cut
   const bySegment = useMemo(() => {
@@ -65,8 +74,8 @@ export default function NpsPage() {
       const seg = companyById.get(n.companyId)?.segment ?? 'unknown';
       (map.get(seg) ?? map.set(seg, []).get(seg)!).push(n.score);
     }
-    return [...map.entries()].map(([seg, s]) => ({ seg, nps: Math.round(s.reduce((a, b) => a + b, 0) / s.length), n: s.length }));
-  }, [nps, companyById]);
+    return [...map.entries()].map(([seg, s]) => ({ seg, nps: npsIndex(s, relative), n: s.length }));
+  }, [nps, companyById, relative]);
 
   const [logOpen, setLogOpen] = useState(false);
 
@@ -131,7 +140,7 @@ export default function NpsPage() {
           <CardHeader><CardTitle>Response feed</CardTitle></CardHeader>
           <CardBody className="space-y-1 p-2">
             {nps.length ? nps.slice(0, 40).map((n) => {
-              const b = bucket(n.score);
+              const b = bucket(n.score, relative);
               return (
                 <div key={n.id} className="flex items-start gap-3 rounded-md px-2 py-1.5 hover:bg-panel">
                   <Chip tone={b === 'promoter' ? 'green' : b === 'passive' ? 'amber' : 'red'}>{n.score}</Chip>
