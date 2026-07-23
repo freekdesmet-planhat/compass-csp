@@ -7,6 +7,7 @@ import type {
   Company, Contact, Profile, Task, Activity, Deal, NpsResponse, UsageMetric,
   SuccessPlan, SuccessPlanObjective, Alert, HealthSnapshot, Notification, Product,
   CompanyProduct, LibraryItem, Dashboard, DashboardWidget, AskThread, AskMessage,
+  PlaybookTemplate, PlaybookGroup, PlaybookStep,
 } from './types';
 
 function db() {
@@ -542,4 +543,69 @@ export async function upsertCompanyProductRow(cp: { companyId: string; productId
   const { data, error } = await db().from('company_products').upsert(payload, { onConflict: 'company_id,product_id' }).select().single();
   if (error) throw error;
   return rowToCompanyProduct(data);
+}
+
+// ── V2 Playbooks: templates / groups / steps (RLS: read auth, write mgr/admin) ─
+export function rowToPlaybookTemplate(r: any): PlaybookTemplate {
+  return { id: r.id, name: r.name ?? '', description: r.description ?? null, type: r.type ?? 'project', targetModel: r.target_model ?? 'company', status: r.status ?? 'draft', entryCriteria: r.entry_criteria ?? {}, exitCriteria: r.exit_criteria ?? {}, exitArchiveAction: r.exit_archive_action ?? 'keep_remaining', createdBy: r.created_by ?? null, segment: r.segment ?? null };
+}
+export function rowToPlaybookGroup(r: any): PlaybookGroup {
+  return { id: r.id, templateId: r.template_id, name: r.name ?? null, position: r.position ?? 0, groupCondition: r.group_condition ?? {}, expireBehavior: r.expire_behavior ?? 'keep' };
+}
+export function rowToPlaybookStep(r: any): PlaybookStep {
+  return { id: r.id, templateId: r.template_id, groupId: r.group_id ?? null, position: r.position ?? 0, stepType: r.step_type ?? 'task', title: r.title ?? null, description: r.description ?? null, priority: r.default_priority ?? null, ownerRef: r.owner_ref ?? { kind: 'role', value: 'account_owner' }, conversationType: r.conversation_type ?? null, checklist: r.checklist ?? [], attachments: r.attachments ?? [], customerVisible: r.customer_visible ?? false, startAfterDays: r.start_after_days ?? 0, durationDays: r.duration_days ?? null, workdaysOnly: r.workdays_only ?? true, dependsOnStepId: r.depends_on_step_id ?? null, dependencyTrigger: r.dependency_trigger ?? null, sendWhen: r.send_when ?? null, emailTemplateId: r.email_template_id ?? null, subject: r.subject ?? null, body: r.body ?? null };
+}
+
+export async function fetchPlaybookTemplates(): Promise<PlaybookTemplate[]> {
+  const { data, error } = await db().from('playbook_templates').select('*').neq('status', 'archived').order('name');
+  if (error) throw error; return (data ?? []).map(rowToPlaybookTemplate);
+}
+export async function fetchPlaybookGroups(templateId: string): Promise<PlaybookGroup[]> {
+  const { data, error } = await db().from('playbook_groups').select('*').eq('template_id', templateId).order('position');
+  if (error) throw error; return (data ?? []).map(rowToPlaybookGroup);
+}
+export async function fetchPlaybookSteps(templateId: string): Promise<PlaybookStep[]> {
+  const { data, error } = await db().from('playbook_template_steps').select('*').eq('template_id', templateId).order('position');
+  if (error) throw error; return (data ?? []).map(rowToPlaybookStep);
+}
+
+const PB_TEMPLATE_COLS: Record<string, string> = { name: 'name', description: 'description', type: 'type', targetModel: 'target_model', status: 'status', entryCriteria: 'entry_criteria', exitCriteria: 'exit_criteria', exitArchiveAction: 'exit_archive_action', segment: 'segment' };
+export async function insertPlaybookTemplateRow(t: Partial<PlaybookTemplate> & { name: string }): Promise<PlaybookTemplate> {
+  const { data, error } = await db().from('playbook_templates').insert({ name: t.name, description: t.description ?? null, type: t.type ?? 'project', target_model: t.targetModel ?? 'company', status: t.status ?? 'draft' }).select().single();
+  if (error) throw error; return rowToPlaybookTemplate(data);
+}
+export async function updatePlaybookTemplateRow(id: string, patch: Record<string, any>): Promise<PlaybookTemplate | null> {
+  const row: Record<string, any> = {}; for (const [k, v] of Object.entries(patch)) { const c = PB_TEMPLATE_COLS[k]; if (c) row[c] = v; }
+  const { data, error } = await db().from('playbook_templates').update(row).eq('id', id).select().maybeSingle();
+  if (error) throw error; return data ? rowToPlaybookTemplate(data) : null;
+}
+export async function deletePlaybookTemplateRow(id: string): Promise<void> {
+  const { error } = await db().from('playbook_templates').delete().eq('id', id); if (error) throw error;
+}
+export async function insertPlaybookGroupRow(g: { templateId: string; name?: string | null; position: number }): Promise<PlaybookGroup> {
+  const { data, error } = await db().from('playbook_groups').insert({ template_id: g.templateId, name: g.name ?? 'New group', position: g.position }).select().single();
+  if (error) throw error; return rowToPlaybookGroup(data);
+}
+export async function updatePlaybookGroupRow(id: string, patch: { name?: string | null; position?: number; expireBehavior?: string }): Promise<void> {
+  const row: Record<string, any> = {}; if ('name' in patch) row.name = patch.name; if ('position' in patch) row.position = patch.position; if ('expireBehavior' in patch) row.expire_behavior = patch.expireBehavior;
+  const { error } = await db().from('playbook_groups').update(row).eq('id', id); if (error) throw error;
+}
+export async function deletePlaybookGroupRow(id: string): Promise<void> {
+  const { error } = await db().from('playbook_groups').delete().eq('id', id); if (error) throw error;
+}
+const PB_STEP_COLS: Record<string, string> = { groupId: 'group_id', position: 'position', stepType: 'step_type', title: 'title', description: 'description', priority: 'default_priority', ownerRef: 'owner_ref', conversationType: 'conversation_type', checklist: 'checklist', attachments: 'attachments', customerVisible: 'customer_visible', startAfterDays: 'start_after_days', durationDays: 'duration_days', workdaysOnly: 'workdays_only', dependsOnStepId: 'depends_on_step_id', dependencyTrigger: 'dependency_trigger', sendWhen: 'send_when', emailTemplateId: 'email_template_id', subject: 'subject', body: 'body' };
+export async function insertPlaybookStepRow(s: Partial<PlaybookStep> & { templateId: string; groupId: string | null; position: number }): Promise<PlaybookStep> {
+  const { data, error } = await db().from('playbook_template_steps').insert({ template_id: s.templateId, group_id: s.groupId, position: s.position, step_type: s.stepType ?? 'task', title: s.title ?? 'New step', default_priority: s.priority ?? 'normal', owner_ref: s.ownerRef ?? { kind: 'role', value: 'account_owner' }, start_after_days: s.startAfterDays ?? 0, workdays_only: s.workdaysOnly ?? true }).select().single();
+  if (error) throw error; return rowToPlaybookStep(data);
+}
+export async function updatePlaybookStepRow(id: string, patch: Record<string, any>): Promise<PlaybookStep | null> {
+  const row: Record<string, any> = {}; for (const [k, v] of Object.entries(patch)) { const c = PB_STEP_COLS[k]; if (c) row[c] = v; }
+  const { data, error } = await db().from('playbook_template_steps').update(row).eq('id', id).select().maybeSingle();
+  if (error) throw error; return data ? rowToPlaybookStep(data) : null;
+}
+export async function deletePlaybookStepRow(id: string): Promise<void> {
+  const { error } = await db().from('playbook_template_steps').delete().eq('id', id); if (error) throw error;
+}
+export async function reorderPlaybookStepsRows(updates: { id: string; position: number; groupId: string | null }[]): Promise<void> {
+  await Promise.all(updates.map((u) => db().from('playbook_template_steps').update({ position: u.position, group_id: u.groupId }).eq('id', u.id)));
 }

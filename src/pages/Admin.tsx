@@ -3,15 +3,15 @@ import { useQueryClient } from '@tanstack/react-query';
 import { PageHeader, PageBody } from '@/components/PageHeader';
 import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Switch, Slider, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Tabs, TabsList, TabsTrigger, TabsContent, EmptyState, DeltaArrow, Dialog, DialogContent, DialogTitle } from '@/components/ui';
 import { DataTable } from '@/components/DataTable';
-import { useProfiles, useAlertRules, useVisibleCompanies, useUpdateProfile } from '@/lib/hooks';
+import { useProfiles, useAlertRules, useVisibleCompanies, useUpdateProfile, usePlaybookTemplates } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { insert, newId } from '@/lib/store';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS, HEALTH_DIMENSIONS, SEGMENT_LABELS, type Segment } from '@/lib/segments';
-import { PLAYBOOKS } from '@/lib/playbooks';
 import { ImportWizard } from './Import';
-import { Shield, Plug, ChevronDown, UserPlus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Shield, Plug, ChevronDown, UserPlus, Workflow } from 'lucide-react';
 import type { Profile } from '@/lib/types';
 
 export default function AdminPage() {
@@ -259,35 +259,25 @@ function AlertRulesTab() {
 }
 
 function PlaybooksTab() {
-  const [open, setOpen] = useState<number | null>(0);
-  const { toast } = useToast();
+  const { data: templates = [] } = usePlaybookTemplates();
   return (
     <div className="space-y-2">
-      {PLAYBOOKS.map((pb, i) => (
-        <Card key={pb.id}>
-          <button className="flex w-full items-center gap-2 px-4 py-3 text-left" onClick={() => setOpen(open === i ? null : i)}>
-            <ChevronDown className={`h-4 w-4 transition-transform ${open === i ? 'rotate-180' : ''}`} />
-            <span className="font-medium">{pb.name}</span>
-            <Chip tone="neutral">{pb.triggerLabel}</Chip>
-            <span className="ml-auto text-sm text-muted-foreground">{pb.steps.length} steps</span>
-          </button>
-          {open === i && (
-            <CardBody className="border-t">
-              <div className="space-y-1.5">
-                {pb.steps.map((s, n) => (
-                  <div key={n} className="flex items-center gap-3 rounded-md border px-3 py-1.5 text-base">
-                    <span className="w-5 text-sm text-muted-foreground tnum">{n + 1}</span>
-                    <span className="flex-1">{s.title}</span>
-                    <Chip>due +{s.dueInDays}d</Chip>
-                    <Chip tone={s.priority === 'high' ? 'red' : 'neutral'}>{s.priority}</Chip>
-                  </div>
-                ))}
-                <Button size="sm" variant="outline" onClick={() => toast('Step added (builder scaffold)')}>+ Add step</Button>
-              </div>
+      <p className="text-sm text-muted-foreground">
+        Playbook templates are now built in the <Link to="/playbooks" className="text-[var(--accent)] hover:underline">Playbooks</Link> page (drag-and-drop builder). This is a read-only summary.
+      </p>
+      {templates.length === 0
+        ? <EmptyState icon={Workflow} title="No playbooks yet" hint="Create one from the Playbooks page." />
+        : templates.map((t) => (
+          <Card key={t.id}>
+            <CardBody className="flex flex-wrap items-center gap-2 py-2.5">
+              <span className="font-medium">{t.name}</span>
+              <Chip tone="accent">{t.type}</Chip>
+              <Chip>{t.targetModel.replace('_', ' ')}</Chip>
+              <Chip tone={t.status === 'live' ? 'green' : t.status === 'archived' ? 'neutral' : 'amber'}>{t.status}</Chip>
+              {(t.segment ?? []).map((s) => <Chip key={s}>{s.replace('_', ' ')}</Chip>)}
             </CardBody>
-          )}
-        </Card>
-      ))}
+          </Card>
+        ))}
     </div>
   );
 }

@@ -15,6 +15,10 @@ import {
   insertLibraryItemRow, incrementLibraryDownloadRow, insertDashboardRow, updateDashboardRow,
   insertDashboardWidgetRow, deleteDashboardWidgetRow, insertAskThreadRow, insertAskMessageRow,
   upsertCompanyProductRow,
+  fetchPlaybookTemplates, fetchPlaybookGroups, fetchPlaybookSteps,
+  insertPlaybookTemplateRow, updatePlaybookTemplateRow, deletePlaybookTemplateRow,
+  insertPlaybookGroupRow, updatePlaybookGroupRow, deletePlaybookGroupRow,
+  insertPlaybookStepRow, updatePlaybookStepRow, deletePlaybookStepRow, reorderPlaybookStepsRows,
 } from './realStore';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
@@ -25,6 +29,7 @@ import type {
   MeetingPrep, Digest, EmailMessage, Note, Profile,
   Notification, Product, CompanyProduct, CompanyProductStatus, LibraryItem, Dashboard,
   DashboardWidget, AskThread, AskMessage, ChangelogEntry,
+  PlaybookTemplate, PlaybookGroup, PlaybookStep,
 } from './types';
 
 // Visibility: which owner ids the current profile can see companies for.
@@ -723,4 +728,53 @@ export function useUpdateProfile() {
       isDemoMode ? update('profiles', id, patch) : await updateProfileRow(id, patch as Record<string, unknown>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
   });
+}
+
+// ── V2 Playbooks: templates / groups / steps (iteration2.md Part A) ─────────
+export function usePlaybookTemplates() {
+  return useQuery({
+    queryKey: ['playbookTemplates'],
+    queryFn: async () => (isDemoMode ? (all('playbookTemplates') as PlaybookTemplate[]).filter((t) => t.status !== 'archived') : fetchPlaybookTemplates()),
+  });
+}
+export function usePlaybookGroups(templateId?: string) {
+  return useQuery({
+    queryKey: ['playbookGroups', templateId], enabled: !!templateId,
+    queryFn: async () => (isDemoMode ? (all('playbookGroups') as PlaybookGroup[]).filter((g) => g.templateId === templateId).sort((a, b) => a.position - b.position) : fetchPlaybookGroups(templateId!)),
+  });
+}
+export function usePlaybookSteps(templateId?: string) {
+  return useQuery({
+    queryKey: ['playbookSteps', templateId], enabled: !!templateId,
+    queryFn: async () => (isDemoMode ? (all('playbookSteps') as PlaybookStep[]).filter((s) => s.templateId === templateId).sort((a, b) => a.position - b.position) : fetchPlaybookSteps(templateId!)),
+  });
+}
+export function usePlaybookMutations() {
+  const qc = useQueryClient();
+  const inval = () => { qc.invalidateQueries({ queryKey: ['playbookTemplates'] }); qc.invalidateQueries({ queryKey: ['playbookGroups'] }); qc.invalidateQueries({ queryKey: ['playbookSteps'] }); };
+  const createTemplate = useMutation({
+    mutationFn: async (t: { name: string; type?: PlaybookTemplate['type']; targetModel?: PlaybookTemplate['targetModel'] }) => {
+      if (!isDemoMode) return insertPlaybookTemplateRow({ name: t.name, type: t.type, targetModel: t.targetModel });
+      const tpl = insert('playbookTemplates', { id: newId('pt'), name: t.name, description: null, type: t.type ?? 'project', targetModel: t.targetModel ?? 'company', status: 'draft', entryCriteria: {}, exitCriteria: {}, exitArchiveAction: 'keep_remaining', createdBy: null, segment: [] } as PlaybookTemplate);
+      insert('playbookGroups', { id: newId('pg'), templateId: tpl.id, name: 'Steps', position: 0, groupCondition: {}, expireBehavior: 'keep' } as PlaybookGroup);
+      return tpl;
+    }, onSuccess: inval,
+  });
+  const updateTemplate = useMutation({ mutationFn: async ({ id, patch }: { id: string; patch: Partial<PlaybookTemplate> }) => (isDemoMode ? update('playbookTemplates', id, patch) : updatePlaybookTemplateRow(id, patch as Record<string, unknown>)), onSuccess: inval });
+  const deleteTemplate = useMutation({
+    mutationFn: async (id: string) => {
+      if (!isDemoMode) return deletePlaybookTemplateRow(id);
+      (all('playbookSteps') as PlaybookStep[]).filter((s) => s.templateId === id).forEach((s) => remove('playbookSteps', s.id));
+      (all('playbookGroups') as PlaybookGroup[]).filter((g) => g.templateId === id).forEach((g) => remove('playbookGroups', g.id));
+      remove('playbookTemplates', id);
+    }, onSuccess: inval,
+  });
+  const createGroup = useMutation({ mutationFn: async (g: { templateId: string; name?: string; position: number }) => (isDemoMode ? insert('playbookGroups', { id: newId('pg'), templateId: g.templateId, name: g.name ?? 'New group', position: g.position, groupCondition: {}, expireBehavior: 'keep' } as PlaybookGroup) : insertPlaybookGroupRow(g)), onSuccess: inval });
+  const updateGroup = useMutation({ mutationFn: async ({ id, patch }: { id: string; patch: { name?: string | null; position?: number; expireBehavior?: string } }) => (isDemoMode ? update('playbookGroups', id, patch as Partial<PlaybookGroup>) : updatePlaybookGroupRow(id, patch)), onSuccess: inval });
+  const deleteGroup = useMutation({ mutationFn: async (id: string) => { if (!isDemoMode) return deletePlaybookGroupRow(id); remove('playbookGroups', id); }, onSuccess: inval });
+  const createStep = useMutation({ mutationFn: async (s: { templateId: string; groupId: string | null; position: number; stepType?: PlaybookStep['stepType'] }) => (isDemoMode ? insert('playbookSteps', { id: newId('ps'), templateId: s.templateId, groupId: s.groupId, position: s.position, stepType: s.stepType ?? 'task', title: 'New step', description: null, priority: 'normal', ownerRef: { kind: 'role', value: 'account_owner' }, conversationType: null, checklist: [], attachments: [], customerVisible: false, startAfterDays: 0, durationDays: null, workdaysOnly: true, dependsOnStepId: null, dependencyTrigger: null } as PlaybookStep) : insertPlaybookStepRow(s)), onSuccess: inval });
+  const updateStep = useMutation({ mutationFn: async ({ id, patch }: { id: string; patch: Partial<PlaybookStep> }) => (isDemoMode ? update('playbookSteps', id, patch) : updatePlaybookStepRow(id, patch as Record<string, unknown>)), onSuccess: inval });
+  const deleteStep = useMutation({ mutationFn: async (id: string) => { if (!isDemoMode) return deletePlaybookStepRow(id); remove('playbookSteps', id); }, onSuccess: inval });
+  const reorderSteps = useMutation({ mutationFn: async (updates: { id: string; position: number; groupId: string | null }[]) => { if (!isDemoMode) return reorderPlaybookStepsRows(updates); updates.forEach((u) => update('playbookSteps', u.id, { position: u.position, groupId: u.groupId } as Partial<PlaybookStep>)); }, onSuccess: inval });
+  return { createTemplate, updateTemplate, deleteTemplate, createGroup, updateGroup, deleteGroup, createStep, updateStep, deleteStep, reorderSteps };
 }

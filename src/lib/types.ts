@@ -549,3 +549,59 @@ export interface ChangelogEntry {
   body?: string | null;
   position: number;
 }
+
+// ── V2 Playbooks engine (iteration2.md Part A) ──────────────────────────────
+export type PlaybookType = 'project' | 'sequence';
+export type PlaybookTargetModel = 'company' | 'contact' | 'opportunity' | 'success_plan' | 'renewal';
+export type PlaybookStatus = 'draft' | 'live' | 'archived';
+export type PlaybookStepType = 'task' | 'email';
+export interface OwnerRef { kind: 'role' | 'specific_user'; value: string }
+export interface PlaybookDependency { kind: 'done' | 'ignored' | 'not_completed_within'; days?: number }
+
+export interface PlaybookTemplate {
+  id: string;
+  name: string;
+  description?: string | null;
+  type: PlaybookType;
+  targetModel: PlaybookTargetModel;
+  status: PlaybookStatus;
+  entryCriteria: unknown;
+  exitCriteria: unknown;
+  exitArchiveAction: 'keep_remaining' | 'cancel_remaining';
+  createdBy?: string | null;
+  segment?: Segment[] | null;
+}
+export interface PlaybookGroup {
+  id: string;
+  templateId: string;
+  name?: string | null;
+  position: number;
+  groupCondition: unknown;
+  expireBehavior: 'keep' | 'expire';
+}
+export interface PlaybookStep {
+  id: string;
+  templateId: string;
+  groupId?: string | null;
+  position: number;
+  stepType: PlaybookStepType;
+  title?: string | null;
+  description?: string | null;
+  priority?: string | null;
+  ownerRef: OwnerRef;
+  conversationType?: string | null;
+  checklist: unknown[];
+  attachments: unknown[];
+  customerVisible: boolean;
+  startAfterDays: number;
+  durationDays?: number | null;
+  workdaysOnly: boolean;
+  dependsOnStepId?: string | null;
+  dependencyTrigger?: PlaybookDependency | null;
+  // email-step fields
+  sendWhen?: string | null;
+  emailTemplateId?: string | null;
+  subject?: string | null;
+  body?: unknown;
+}
+export interface EmailTemplate { id: string; name: string; subject?: string | null; body: unknown; tags: string[] }

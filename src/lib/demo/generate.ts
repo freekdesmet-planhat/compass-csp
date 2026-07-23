@@ -10,6 +10,7 @@ import type {
   CalendarEvent, MeetingPrep, Digest, EmailMessage, Segment, ContactRole, HealthRecommendation,
   Product, CompanyProduct, CompanyProductStatus, Notification, LibraryItem, Dashboard,
   DashboardWidget, AskThread, AskMessage, ChangelogEntry, ImportRun,
+  PlaybookTemplate, PlaybookGroup, PlaybookStep, EmailTemplate, PlaybookType, PlaybookStepType,
 } from '../types';
 
 // ── seeded PRNG ──────────────────────────────────────────────────────────────
@@ -65,6 +66,10 @@ export interface DemoDataset {
   askMessages: AskMessage[];
   changelog: ChangelogEntry[];
   importRuns: ImportRun[];
+  playbookTemplates: PlaybookTemplate[];
+  playbookGroups: PlaybookGroup[];
+  playbookSteps: PlaybookStep[];
+  emailTemplates: EmailTemplate[];
 }
 
 const FIRST = ['Sarah', 'James', 'Maria', 'David', 'Lena', 'Tom', 'Priya', 'Marcus', 'Elena', 'Yuki', 'Omar', 'Anna', 'Kevin', 'Sofia', 'Liam', 'Noah', 'Emma', 'Ava', 'Raj', 'Chloe'];
@@ -137,7 +142,9 @@ export function generateDemoData(): DemoDataset {
     digests: [], emails: [],
     products: [], companyProducts: [], notifications: [], libraryItems: [], dashboards: [],
     dashboardWidgets: [], askThreads: [], askMessages: [], changelog: [], importRuns: [],
+    playbookTemplates: [], playbookGroups: [], playbookSteps: [], emailTemplates: [],
   };
+  seedPlaybooks(ds);
 
   // ── Profiles: Freek (admin), Bey (manager), 10 CSMs across the 3 segments ──
   // Mirrors the real internal roster seeded in Supabase so demo + live match.
@@ -676,3 +683,34 @@ const CHANGELOG_SEED: ChangelogEntry[] = [
   { id: 'cl_110_13', version: '1.1.0', releasedOn: '2026-07-16', category: 'new', title: '@mentions & notifications', body: 'Mention teammates in notes; in-app bell + optional Slack DM.', position: 13 },
   { id: 'cl_110_14', version: '1.1.0', releasedOn: '2026-07-16', category: 'improved', title: 'Editable everywhere', body: 'MEDDIC toggles, contact fields, success-plan statuses and deal qualification are all hand-editable.', position: 14 },
 ];
+
+// ── V2 Playbooks demo seed (mirrors the DB seed; replaces the retired
+//    src/lib/playbooks.ts constant so demo mode is DB-shaped too). ────────────
+function seedPlaybooks(ds: DemoDataset): void {
+  type Row = [title: string, after: number, priority: 'normal' | 'high', stepType?: PlaybookStepType];
+  const defs: Array<{ id: string; name: string; desc: string; type: PlaybookType; seg: Segment[]; steps: Row[] }> = [
+    { id: 'pt_onboarding_scaled', name: 'Onboarding — Scaled', desc: 'Automated first-90-days motion for scaled accounts.', type: 'project', seg: ['scaled'],
+      steps: [['Welcome email sequence', 0, 'normal', 'email'], ['Activation check', 14, 'normal'], ['30-day value review', 30, 'high']] },
+    { id: 'pt_renewal_120', name: 'Renewal 120-day motion', desc: 'Staged renewal motion for mid-touch and enterprise books.', type: 'project', seg: ['mid_touch', 'enterprise'],
+      steps: [['T-120 internal review', 0, 'normal'], ['T-90 exec check-in', 30, 'high'], ['T-60 proposal', 60, 'high'], ['T-30 close plan', 90, 'high']] },
+    { id: 'pt_renewal_scaled', name: 'Scaled renewal automation', desc: 'Low-touch renewal email sequence for scaled accounts.', type: 'sequence', seg: ['scaled'],
+      steps: [['T-60 renewal email 1', 0, 'normal', 'email'], ['T-45 reminder', 15, 'normal', 'email'], ['T-15 final notice', 45, 'high', 'email']] },
+    { id: 'pt_risk_turnaround', name: 'Risk turnaround', desc: 'Fires when cached health falls 10+ points week-over-week.', type: 'project', seg: ['scaled', 'mid_touch', 'enterprise'],
+      steps: [['Root-cause call', 2, 'high'], ['Exec escalation', 5, 'high'], ['Path-to-green plan', 7, 'high']] },
+    { id: 'pt_exec_cadence', name: 'Enterprise exec-sponsor cadence', desc: 'Keeps a steady exec touch and QBR rhythm on enterprise accounts.', type: 'project', seg: ['enterprise'],
+      steps: [['Quarterly exec sync', 0, 'normal'], ['QBR prep', 80, 'normal'], ['QBR', 90, 'high']] },
+  ];
+  for (const d of defs) {
+    ds.playbookTemplates.push({ id: d.id, name: d.name, description: d.desc, type: d.type, targetModel: 'company', status: 'live', entryCriteria: {}, exitCriteria: {}, exitArchiveAction: 'keep_remaining', createdBy: null, segment: d.seg });
+    const groupId = `${d.id}_g0`;
+    ds.playbookGroups.push({ id: groupId, templateId: d.id, name: 'Steps', position: 0, groupCondition: {}, expireBehavior: 'keep' });
+    d.steps.forEach(([title, after, priority, stepType], i) => {
+      ds.playbookSteps.push({
+        id: `${d.id}_s${i}`, templateId: d.id, groupId, position: i, stepType: (stepType ?? 'task'),
+        title, description: null, priority, ownerRef: { kind: 'role', value: 'account_owner' }, conversationType: null,
+        checklist: [], attachments: [], customerVisible: false, startAfterDays: after, durationDays: null, workdaysOnly: true,
+        dependsOnStepId: null, dependencyTrigger: null,
+      });
+    });
+  }
+}
