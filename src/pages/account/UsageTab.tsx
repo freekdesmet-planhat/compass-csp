@@ -25,6 +25,9 @@ const RANGES = [
   { label: '365d', days: 365 },
 ];
 
+// Metric keys may be snake_case app keys or free-form Planhat dimension names.
+const humanize = (k: string) => k.replace(/_/g, ' ').replace(/\bmrr\b/gi, 'MRR').replace(/\barr\b/gi, 'ARR');
+
 export function UsageTab({ company }: { company: Company }) {
   const { profile } = useSession();
   const { data: metrics = [] } = useUsageMetrics(company.id);
@@ -38,16 +41,20 @@ export function UsageTab({ company }: { company: Company }) {
   }, [metrics]);
 
   const latest = (key: string) => byKey.get(key)?.slice(-1)[0]?.value ?? null;
+  const deltaOf = (key: string) => {
+    const s = byKey.get(key) ?? [];
+    return s.length >= USAGE_CONFIG.trendWeeks + 1 ? s.slice(-1)[0].value - s.slice(-(USAGE_CONFIG.trendWeeks + 1))[0].value : null;
+  };
+  const lastDateOf = (key: string) => byKey.get(key)?.slice(-1)[0]?.metricDate ?? null;
   const wau = latest(USAGE_CONFIG.wauMetric);
   const seats = latest(USAGE_CONFIG.seatsMetric);
   const utilisation = wau != null && seats ? Math.round((wau / seats) * 100) : null;
-
-  // 4-week trend on WAU
-  const wauSeries = byKey.get(USAGE_CONFIG.wauMetric) ?? [];
-  const trend = wauSeries.length >= USAGE_CONFIG.trendWeeks + 1
-    ? (wauSeries.slice(-1)[0].value - wauSeries.slice(-(USAGE_CONFIG.trendWeeks + 1))[0].value)
-    : null;
-  const lastActive = wauSeries.slice(-1)[0]?.metricDate ?? null;
+  const trend = deltaOf(USAGE_CONFIG.wauMetric);
+  const lastActive = lastDateOf(USAGE_CONFIG.wauMetric);
+  // WAU/seats drive the headline when the tenant emits them (demo + SaaS-usage
+  // tenants). Otherwise headline the actual synced metrics (e.g. Planhat
+  // dimensions like "Number of Leads") so the tiles reflect real data.
+  const hasStdMetrics = wau != null || seats != null;
 
   if (!metrics.length) {
     return <EmptyState icon={ActivityIcon} title="No usage data" hint="No usage_metrics for this account yet — check the metric keys in Admin → Health config." />;
@@ -61,10 +68,19 @@ export function UsageTab({ company }: { company: Company }) {
     <div className="space-y-4">
       {/* Headline row */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Utilisation (WAU/seats)" value={utilisation != null ? `${utilisation}%` : '—'} />
-        <Stat label="WAU" value={wau != null ? fmtNumber(wau) : '—'} extra={trend != null ? <DeltaArrow delta={trend} /> : undefined} />
-        <Stat label="Licensed seats" value={seats != null ? fmtNumber(seats) : '—'} />
-        <Stat label="Last active" value={lastActive ? fmtDate(lastActive) : '—'} />
+        {hasStdMetrics ? (
+          <>
+            <Stat label="Utilisation (WAU/seats)" value={utilisation != null ? `${utilisation}%` : '—'} />
+            <Stat label="WAU" value={wau != null ? fmtNumber(wau) : '—'} extra={trend != null ? <DeltaArrow delta={trend} /> : undefined} />
+            <Stat label="Licensed seats" value={seats != null ? fmtNumber(seats) : '—'} />
+            <Stat label="Last active" value={lastActive ? fmtDate(lastActive) : '—'} />
+          </>
+        ) : (
+          allKeys.slice(0, 4).map((key) => {
+            const v = latest(key); const d = deltaOf(key); const ld = lastDateOf(key);
+            return <Stat key={key} label={humanize(key)} value={v != null ? fmtNumber(v) : '—'} extra={d != null ? <DeltaArrow delta={d} /> : undefined} sub={ld ? fmtDate(ld) : undefined} />;
+          })
+        )}
       </div>
 
       {/* Range toggle */}
@@ -83,7 +99,7 @@ export function UsageTab({ company }: { company: Company }) {
           const data = chartData(key);
           return (
             <Card key={key}>
-              <CardHeader className="py-2"><CardTitle className="text-sm">{key.replace(/_/g, ' ')}</CardTitle></CardHeader>
+              <CardHeader className="py-2"><CardTitle className="text-sm">{humanize(key)}</CardTitle></CardHeader>
               <CardBody className="py-2">
                 {data.length ? (
                   <div className="h-40">
@@ -112,7 +128,7 @@ export function UsageTab({ company }: { company: Company }) {
             const cur = series.slice(-1)[0]?.value ?? null;
             return (
               <div key={key} className="rounded-md border p-3">
-                <div className="text-xs text-muted-foreground">{key.replace(/_/g, ' ')}</div>
+                <div className="text-xs text-muted-foreground">{humanize(key)}</div>
                 <div className="mt-0.5 text-xl font-semibold tnum">{cur != null ? fmtNumber(cur) : '—'}</div>
                 <Sparkline values={series.map((s) => s.value)} />
               </div>
@@ -127,16 +143,17 @@ export function UsageTab({ company }: { company: Company }) {
           <Link to="/admin" className="text-[var(--accent)] hover:underline">Manage metrics</Link> in Admin → Health config.
         </div>
       )}
-      <div className="flex flex-wrap gap-1">{allKeys.map((k) => <Chip key={k}>{k}</Chip>)}</div>
+      <div className="flex flex-wrap gap-1">{allKeys.map((k) => <Chip key={k}>{humanize(k)}</Chip>)}</div>
     </div>
   );
 }
 
-function Stat({ label, value, extra }: { label: string; value: string; extra?: React.ReactNode }) {
+function Stat({ label, value, extra, sub }: { label: string; value: string; extra?: React.ReactNode; sub?: string }) {
   return (
     <Card className="px-3 py-2.5">
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
       <div className="mt-0.5 flex items-center gap-2 text-xl font-semibold tnum">{value}{extra}</div>
+      {sub && <div className="mt-0.5 text-xs text-muted-foreground">as of {sub}</div>}
     </Card>
   );
 }

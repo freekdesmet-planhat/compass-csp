@@ -3,11 +3,29 @@
 // RLS enforces visibility server-side, so callers use the returned rows as-is.
 // The demo store (store.ts) remains the path when isDemoMode is true.
 import { supabase } from './supabase';
-import type { Company, Contact, Profile, Task } from './types';
+import type {
+  Company, Contact, Profile, Task, Activity, Deal, NpsResponse, UsageMetric,
+  SuccessPlan, SuccessPlanObjective,
+} from './types';
 
 function db() {
   if (!supabase) throw new Error('Supabase client unavailable in real mode');
   return supabase;
+}
+
+// Paginate past PostgREST's default 1000-row cap (activities/tasks exceed it).
+async function fetchAllRows(table: string, apply?: (q: any) => any): Promise<any[]> {
+  const out: any[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    let q = db().from(table).select('*').range(from, from + pageSize - 1);
+    if (apply) q = apply(q);
+    const { data, error } = await q;
+    if (error) throw error;
+    out.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+  }
+  return out;
 }
 
 // ── row → app-type mappers ────────────────────────────────────────────────────
@@ -111,4 +129,87 @@ export async function insertTaskRow(t: Partial<Task> & { companyId: string; titl
     due_date: t.dueDate ?? null, priority: t.priority ?? 'normal', origin: t.origin ?? 'manual',
   });
   if (error) throw error;
+}
+
+// ── Bucket A: Planhat-synced reads (activities, deals, tasks, nps, usage,
+//    success plans + objectives). RLS scopes each by can_see_company. ──────────
+export function rowToActivity(r: any): Activity {
+  return {
+    id: r.id, companyId: r.company_id, contactIds: r.contact_ids ?? [], userId: r.user_id ?? null,
+    type: r.type, direction: r.direction ?? null, title: r.title ?? '', snippet: r.snippet ?? null,
+    bodyRef: r.body_ref ?? null, occurredAt: r.occurred_at, meta: r.meta ?? {},
+  };
+}
+export function rowToDeal(r: any): Deal {
+  return {
+    id: r.id, companyId: r.company_id, hubspotDealId: r.hubspot_deal_id ?? null, pipeline: r.pipeline,
+    stage: r.stage ?? null, stageProbability: r.stage_probability ?? null, forecastCategory: r.forecast_category ?? null,
+    name: r.name ?? '', amount: r.amount ?? null, currency: r.currency ?? 'USD', closeDate: r.close_date ?? null,
+    ownerId: r.owner_id ?? null, status: r.status, nextSteps: r.next_steps ?? null, aiSummary: r.ai_summary ?? null,
+    confidence: r.confidence ?? null, qualification: r.qualification ?? {}, suggestedStage: r.suggested_stage ?? null,
+    suggestedStageReason: r.suggested_stage_reason ?? null, contactIds: r.contact_ids ?? [], lastSyncedAt: r.last_synced_at ?? null,
+  };
+}
+export function rowToTask(r: any): Task {
+  return {
+    id: r.id, companyId: r.company_id, assigneeId: r.assignee_id ?? null, creatorId: r.creator_id ?? null,
+    title: r.title ?? '', description: r.description ?? null, taskType: 'todo', dueDate: r.due_date ?? null,
+    completedAt: r.completed_at ?? null, priority: r.priority ?? 'normal', origin: r.origin ?? 'manual',
+    playbookRunStepId: r.playbook_run_step_id ?? null, sourceActivityId: r.source_activity_id ?? null,
+    successPlanObjectiveId: r.success_plan_objective_id ?? null, contactId: null,
+  };
+}
+export function rowToNps(r: any): NpsResponse {
+  return { id: r.id, companyId: r.company_id, contactId: r.contact_id ?? null, score: r.score, comment: r.comment ?? null, respondedAt: r.responded_at };
+}
+export function rowToUsage(r: any): UsageMetric {
+  return { id: r.id, companyId: r.company_id, metricKey: r.metric_key, metricDate: r.metric_date, value: Number(r.value) };
+}
+export function rowToSuccessPlan(r: any): SuccessPlan {
+  return { id: r.id, companyId: r.company_id, name: r.name ?? '', ownerId: r.owner_id ?? null, status: r.status ?? 'active', targetDate: r.target_date ?? null, progressPct: Number(r.progress_pct ?? 0) };
+}
+export function rowToObjective(r: any): SuccessPlanObjective {
+  return {
+    id: r.id, planId: r.plan_id, companyId: r.company_id, title: r.title ?? '', businessOutcome: r.business_outcome ?? null,
+    metric: r.metric ?? null, targetDate: r.target_date ?? null, status: r.status, position: r.position ?? 0, notes: r.notes ?? null,
+  };
+}
+
+export async function fetchActivities(companyId?: string): Promise<Activity[]> {
+  const rows = await fetchAllRows('activities', (q) => {
+    const x = q.order('occurred_at', { ascending: false });
+    return companyId ? x.eq('company_id', companyId) : x;
+  });
+  return rows.map(rowToActivity);
+}
+export async function fetchDeals(companyId?: string): Promise<Deal[]> {
+  const rows = await fetchAllRows('deals', (q) => (companyId ? q.eq('company_id', companyId) : q));
+  return rows.map(rowToDeal);
+}
+export async function fetchTasks(companyId?: string): Promise<Task[]> {
+  const rows = await fetchAllRows('tasks', (q) => (companyId ? q.eq('company_id', companyId) : q));
+  return rows.map(rowToTask);
+}
+export async function fetchNps(companyId?: string): Promise<NpsResponse[]> {
+  const rows = await fetchAllRows('nps_responses', (q) => (companyId ? q.eq('company_id', companyId) : q));
+  return rows.map(rowToNps);
+}
+// Usage is a large time-series; only fetch per-company (global callers get []).
+export async function fetchUsageMetrics(companyId?: string): Promise<UsageMetric[]> {
+  if (!companyId) return [];
+  const rows = await fetchAllRows('usage_metrics', (q) => q.eq('company_id', companyId));
+  return rows.map(rowToUsage);
+}
+export async function fetchSuccessPlans(companyId?: string): Promise<SuccessPlan[]> {
+  const rows = await fetchAllRows('success_plans', (q) => (companyId ? q.eq('company_id', companyId) : q));
+  return rows.map(rowToSuccessPlan);
+}
+export async function fetchObjectives(companyId?: string, planId?: string): Promise<SuccessPlanObjective[]> {
+  const rows = await fetchAllRows('success_plan_objectives', (q) => {
+    let x = q.order('position', { ascending: true });
+    if (companyId) x = x.eq('company_id', companyId);
+    if (planId) x = x.eq('plan_id', planId);
+    return x;
+  });
+  return rows.map(rowToObjective);
 }

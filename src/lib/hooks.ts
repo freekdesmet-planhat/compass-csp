@@ -4,6 +4,8 @@ import { isDemoMode } from './supabase';
 import {
   fetchCompanies, fetchCompany, fetchContacts, fetchContact, fetchProfiles,
   updateContactRow, insertTaskRow,
+  fetchActivities, fetchDeals, fetchTasks, fetchNps, fetchUsageMetrics,
+  fetchSuccessPlans, fetchObjectives,
 } from './realStore';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
@@ -74,43 +76,49 @@ export function useContacts(companyId?: string) {
 export function useActivities(companyId?: string) {
   return useQuery({
     queryKey: ['activities', companyId],
-    queryFn: () =>
-      (all('activities') as Activity[])
+    queryFn: async () => {
+      if (!isDemoMode) return fetchActivities(companyId);
+      return (all('activities') as Activity[])
         .filter((a) => !companyId || a.companyId === companyId)
-        .sort((a, b) => +new Date(b.occurredAt) - +new Date(a.occurredAt)),
+        .sort((a, b) => +new Date(b.occurredAt) - +new Date(a.occurredAt));
+    },
   });
 }
 
 export function useDeals(companyId?: string) {
   return useQuery({
     queryKey: ['deals', companyId],
-    queryFn: () => (isDemoMode ? (all('deals') as Deal[]).filter((d) => !companyId || d.companyId === companyId) : ([] as Deal[])),
+    queryFn: async () => (isDemoMode ? (all('deals') as Deal[]).filter((d) => !companyId || d.companyId === companyId) : fetchDeals(companyId)),
   });
 }
 
 export function useTasks(companyId?: string) {
   return useQuery({
     queryKey: ['tasks', companyId],
-    // Real mode: tasks aren't synced from Planhat yet → empty (not demo data).
-    queryFn: () => (isDemoMode ? (all('tasks') as Task[]).filter((t) => !companyId || t.companyId === companyId) : ([] as Task[])),
+    queryFn: async () => (isDemoMode ? (all('tasks') as Task[]).filter((t) => !companyId || t.companyId === companyId) : fetchTasks(companyId)),
   });
 }
 
+// Alerts/alert-rules: not generated in real mode yet → empty (no fake data).
 export function useAlerts() {
-  return useQuery({ queryKey: ['alerts'], queryFn: () => all('alerts') as Alert[] });
+  return useQuery({ queryKey: ['alerts'], queryFn: () => (isDemoMode ? (all('alerts') as Alert[]) : ([] as Alert[])) });
 }
 
 export function useAlertRules() {
   return useQuery({ queryKey: ['alertRules'], queryFn: () => (isDemoMode ? getDb().alertRules : getDb().alertRules.slice(0, 0)) });
 }
 
+// Health snapshots aren't produced by the Planhat sync (health is computed) →
+// empty in real mode until a compute job populates them.
 export function useHealthSnapshots(companyId?: string) {
   return useQuery({
     queryKey: ['healthSnapshots', companyId],
     queryFn: () =>
-      (all('healthSnapshots') as HealthSnapshot[])
-        .filter((h) => !companyId || h.companyId === companyId)
-        .sort((a, b) => +new Date(a.snapshotDate) - +new Date(b.snapshotDate)),
+      isDemoMode
+        ? (all('healthSnapshots') as HealthSnapshot[])
+            .filter((h) => !companyId || h.companyId === companyId)
+            .sort((a, b) => +new Date(a.snapshotDate) - +new Date(b.snapshotDate))
+        : ([] as HealthSnapshot[]),
   });
 }
 
@@ -123,22 +131,24 @@ export function useLatestSnapshot(companyId?: string) {
 export function useSuccessPlans(companyId?: string) {
   return useQuery({
     queryKey: ['successPlans', companyId],
-    queryFn: () => (all('successPlans') as SuccessPlan[]).filter((p) => !companyId || p.companyId === companyId),
+    queryFn: async () => (isDemoMode ? (all('successPlans') as SuccessPlan[]).filter((p) => !companyId || p.companyId === companyId) : fetchSuccessPlans(companyId)),
   });
 }
 
 export function useObjectives(companyId?: string, planId?: string) {
   return useQuery({
     queryKey: ['objectives', companyId, planId],
-    queryFn: () =>
-      (all('objectives') as SuccessPlanObjective[])
-        .filter((o) => (!companyId || o.companyId === companyId) && (!planId || o.planId === planId))
-        .sort((a, b) => a.position - b.position),
+    queryFn: async () =>
+      isDemoMode
+        ? (all('objectives') as SuccessPlanObjective[])
+            .filter((o) => (!companyId || o.companyId === companyId) && (!planId || o.planId === planId))
+            .sort((a, b) => a.position - b.position)
+        : fetchObjectives(companyId, planId),
   });
 }
 
 export function useNps(companyId?: string) {
-  return useQuery({ queryKey: ['nps', companyId], queryFn: () => (isDemoMode ? (all('npsResponses') as NpsResponse[]).filter((n) => !companyId || n.companyId === companyId) : ([] as NpsResponse[])) });
+  return useQuery({ queryKey: ['nps', companyId], queryFn: async () => (isDemoMode ? (all('npsResponses') as NpsResponse[]).filter((n) => !companyId || n.companyId === companyId) : fetchNps(companyId)) });
 }
 export function useCreateNps() {
   const qc = useQueryClient();
@@ -152,31 +162,34 @@ export function useCreateNps() {
     onSuccess: (_r, v) => { qc.invalidateQueries({ queryKey: ['nps'] }); qc.invalidateQueries({ queryKey: ['activities', v.companyId] }); },
   });
 }
+// CSAT / tickets / calendar / meeting-preps / emails / notes / digests come from
+// integrations (support, Gmail, Gcal, Fathom) or compute jobs not wired to real
+// mode yet → empty in real mode (no demo data leaks in).
 export function useCsat(companyId?: string) {
-  return useQuery({ queryKey: ['csat', companyId], queryFn: () => (all('csatResponses') as CsatResponse[]).filter((n) => !companyId || n.companyId === companyId) });
+  return useQuery({ queryKey: ['csat', companyId], queryFn: () => (isDemoMode ? (all('csatResponses') as CsatResponse[]).filter((n) => !companyId || n.companyId === companyId) : ([] as CsatResponse[])) });
 }
 export function useTickets(companyId?: string) {
-  return useQuery({ queryKey: ['tickets', companyId], queryFn: () => (all('tickets') as Ticket[]).filter((t) => !companyId || t.companyId === companyId) });
+  return useQuery({ queryKey: ['tickets', companyId], queryFn: () => (isDemoMode ? (all('tickets') as Ticket[]).filter((t) => !companyId || t.companyId === companyId) : ([] as Ticket[])) });
 }
 export function useUsageMetrics(companyId?: string) {
-  return useQuery({ queryKey: ['usage', companyId], queryFn: () => (isDemoMode ? (all('usageMetrics') as UsageMetric[]).filter((u) => !companyId || u.companyId === companyId) : ([] as UsageMetric[])) });
+  return useQuery({ queryKey: ['usage', companyId], queryFn: async () => (isDemoMode ? (all('usageMetrics') as UsageMetric[]).filter((u) => !companyId || u.companyId === companyId) : fetchUsageMetrics(companyId)) });
 }
 export function useCalendarEvents(companyId?: string) {
-  return useQuery({ queryKey: ['calendar', companyId], queryFn: () => (all('calendarEvents') as CalendarEvent[]).filter((e) => !companyId || e.companyId === companyId) });
+  return useQuery({ queryKey: ['calendar', companyId], queryFn: () => (isDemoMode ? (all('calendarEvents') as CalendarEvent[]).filter((e) => !companyId || e.companyId === companyId) : ([] as CalendarEvent[])) });
 }
 export function useMeetingPreps() {
-  return useQuery({ queryKey: ['meetingPreps'], queryFn: () => all('meetingPreps') as MeetingPrep[] });
+  return useQuery({ queryKey: ['meetingPreps'], queryFn: () => (isDemoMode ? (all('meetingPreps') as MeetingPrep[]) : ([] as MeetingPrep[])) });
 }
 export function useEmails(companyId?: string) {
-  return useQuery({ queryKey: ['emails', companyId], queryFn: () => (all('emails') as EmailMessage[]).filter((e) => !companyId || e.companyId === companyId).sort((a, b) => +new Date(b.sentAt) - +new Date(a.sentAt)) });
+  return useQuery({ queryKey: ['emails', companyId], queryFn: () => (isDemoMode ? (all('emails') as EmailMessage[]).filter((e) => !companyId || e.companyId === companyId).sort((a, b) => +new Date(b.sentAt) - +new Date(a.sentAt)) : ([] as EmailMessage[])) });
 }
 export function useNotes(companyId?: string) {
-  return useQuery({ queryKey: ['notes', companyId], queryFn: () => (getDb().activities as Activity[]).filter((a) => a.type === 'note' && (!companyId || a.companyId === companyId)) as unknown as Note[] });
+  return useQuery({ queryKey: ['notes', companyId], queryFn: () => (isDemoMode ? ((getDb().activities as Activity[]).filter((a) => a.type === 'note' && (!companyId || a.companyId === companyId)) as unknown as Note[]) : ([] as Note[])) });
 }
 export function useDigest(userId: string, type: 'daily' | 'weekly_exec' = 'daily') {
   return useQuery({
     queryKey: ['digest', userId, type],
-    queryFn: () => (all('digests') as Digest[]).filter((d) => d.userId === userId && d.digestType === type).sort((a, b) => +new Date(b.digestDate) - +new Date(a.digestDate))[0] ?? null,
+    queryFn: () => (isDemoMode ? ((all('digests') as Digest[]).filter((d) => d.userId === userId && d.digestType === type).sort((a, b) => +new Date(b.digestDate) - +new Date(a.digestDate))[0] ?? null) : null),
   });
 }
 
@@ -434,12 +447,12 @@ export function useContact(id: string | undefined) {
 
 // Products & whitespace (C5)
 export function useProducts() {
-  return useQuery({ queryKey: ['products'], queryFn: () => all('products') as Product[] });
+  return useQuery({ queryKey: ['products'], queryFn: () => (isDemoMode ? (all('products') as Product[]) : ([] as Product[])) });
 }
 export function useCompanyProducts(companyId?: string) {
   return useQuery({
     queryKey: ['companyProducts', companyId],
-    queryFn: () => (all('companyProducts') as CompanyProduct[]).filter((cp) => !companyId || cp.companyId === companyId),
+    queryFn: () => (isDemoMode ? (all('companyProducts') as CompanyProduct[]).filter((cp) => !companyId || cp.companyId === companyId) : ([] as CompanyProduct[])),
   });
 }
 export function useUpsertCompanyProduct() {
@@ -475,7 +488,7 @@ export function useNotifications() {
   const { profile } = useSession();
   return useQuery({
     queryKey: ['notifications', profile.id],
-    queryFn: () => (all('notifications') as Notification[]).filter((n) => n.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+    queryFn: () => (isDemoMode ? (all('notifications') as Notification[]).filter((n) => n.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)) : ([] as Notification[])),
   });
 }
 export function useMarkNotificationsRead() {
@@ -501,7 +514,7 @@ export function useCreateNotification() {
 
 // Library (D4)
 export function useLibraryItems() {
-  return useQuery({ queryKey: ['library'], queryFn: () => all('libraryItems') as LibraryItem[] });
+  return useQuery({ queryKey: ['library'], queryFn: () => (isDemoMode ? (all('libraryItems') as LibraryItem[]) : ([] as LibraryItem[])) });
 }
 export function useLibraryMutations() {
   const qc = useQueryClient();
@@ -524,6 +537,7 @@ export function useDashboards() {
   return useQuery({
     queryKey: ['dashboards', profile.id],
     queryFn: () => {
+      if (!isDemoMode) return [] as Dashboard[];
       const teamIds = new Set(allProfiles.filter((p) => p.managerId === profile.id).map((p) => p.id));
       return (all('dashboards') as Dashboard[]).filter((d) =>
         d.ownerId === profile.id || profile.role === 'admin' || (d.shared && (d.ownerId != null && teamIds.has(d.ownerId))) || (d.shared && d.ownerId === profile.id));
@@ -533,7 +547,7 @@ export function useDashboards() {
 export function useDashboardWidgets(dashboardId?: string) {
   return useQuery({
     queryKey: ['dashboardWidgets', dashboardId],
-    queryFn: () => (all('dashboardWidgets') as DashboardWidget[]).filter((w) => !dashboardId || w.dashboardId === dashboardId),
+    queryFn: () => (isDemoMode ? (all('dashboardWidgets') as DashboardWidget[]).filter((w) => !dashboardId || w.dashboardId === dashboardId) : ([] as DashboardWidget[])),
   });
 }
 export function useDashboardMutations() {
@@ -564,13 +578,13 @@ export function useAskThreads() {
   const { profile } = useSession();
   return useQuery({
     queryKey: ['askThreads', profile.id],
-    queryFn: () => (all('askThreads') as AskThread[]).filter((t) => t.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+    queryFn: () => (isDemoMode ? (all('askThreads') as AskThread[]).filter((t) => t.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)) : ([] as AskThread[])),
   });
 }
 export function useAskMessages(threadId?: string) {
   return useQuery({
     queryKey: ['askMessages', threadId],
-    queryFn: () => (all('askMessages') as AskMessage[]).filter((m) => m.threadId === threadId).sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)),
+    queryFn: () => (isDemoMode ? (all('askMessages') as AskMessage[]).filter((m) => m.threadId === threadId).sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)) : ([] as AskMessage[])),
   });
 }
 
@@ -594,7 +608,7 @@ export function useAskSend() {
 
 // Changelog (D7)
 export function useChangelog() {
-  return useQuery({ queryKey: ['changelog'], queryFn: () => (all('changelog') as ChangelogEntry[]).slice().sort((a, b) => a.position - b.position) });
+  return useQuery({ queryKey: ['changelog'], queryFn: () => (isDemoMode ? (all('changelog') as ChangelogEntry[]).slice().sort((a, b) => a.position - b.position) : ([] as ChangelogEntry[])) });
 }
 
 // Update the current profile (sidebar collapse, last_seen_version)
