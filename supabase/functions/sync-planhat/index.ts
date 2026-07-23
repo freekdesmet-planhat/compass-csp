@@ -308,8 +308,8 @@ serve(async (req) => {
       const hScore = c.h != null ? Math.round((num(c.h) ?? 0) * 10) : undefined; // Planhat h is 0–10
       const patch: Record<string, unknown> = {
         name: c.name,
-        arr: num(c.arr) ?? num(c.arrTotal) ?? undefined,
-        mrr: num(c.mr) ?? num(c.mrTotal) ?? num(c.mrr) ?? undefined, // Planhat uses `mr`, not `mrr`
+        arr: num(c.arr) ?? undefined, // clean annual; arrTotal/mrTotal are inflated lifetime sums
+        mrr: num(c.mr) ?? undefined, // Planhat uses `mr` (monthly), not `mrr`
         domains: Array.isArray(c.domains) ? c.domains : c.domain ? [c.domain] : undefined,
         owner_id: ownerId ?? undefined,
         status: str(c.status) ?? undefined,
@@ -534,28 +534,17 @@ serve(async (req) => {
     }));
 
     // ── Licenses → companies.arr/mrr (summed) + usage_metrics(license_mrr) ───
-    // Full scan: aggregation needs all licences per company.
+    // Full scan → usage_metrics(license_mrr) time-series ONLY. We intentionally do
+    // NOT overwrite companies.arr/mrr here: Planhat's company `arr`/`mr` are the
+    // clean annual/monthly values; summing licences produced tiny/inflated ARR.
     const lic = await fetchUpdated("/licenses", "");
-    const agg = new Map<string, { mrr: number; arr: number }>();
     const usageRows: { company_id: string; metric_key: string; metric_date: string; value: number }[] = [];
     for (const [, l] of lic.changed) {
       const companyId = resolveCompany(l.companyId ?? l.company);
       if (!companyId) continue;
       const mrr = num(l.mrr) ?? 0;
-      const arrVal = num(l.arr) ?? (num(l.value) ?? 0);
-      const cur = agg.get(companyId) ?? { mrr: 0, arr: 0 };
-      cur.mrr += mrr; cur.arr += arrVal || mrr * 12;
-      agg.set(companyId, cur);
       const when = l.fromDate ?? l.startDate ?? l.date ?? l.createdAt;
       usageRows.push({ company_id: companyId, metric_key: "license_mrr", metric_date: dateOnly(when ?? Date.now()), value: mrr });
-    }
-    let licCompaniesUpdated = 0;
-    const aggEntries = [...agg.entries()];
-    for (let i = 0; i < aggEntries.length; i += 25) {
-      const slice = aggEntries.slice(i, i + 25);
-      const results = await Promise.all(slice.map(([companyId, totals]) => supabase.from("companies").update({ mrr: totals.mrr, arr: Math.round(totals.arr) }).eq("id", companyId)));
-      for (let k = 0; k < results.length; k++) if (results[k].error) throw new Error(`licenses: company totals ${slice[k][0]}: ${results[k].error!.message}`);
-      licCompaniesUpdated += slice.length;
     }
     const licUsage = await upsertUsageMetrics(supabase, usageRows);
 
@@ -621,7 +610,7 @@ serve(async (req) => {
       tasks: { scanned: tk.scanned, changed: tk.changed.size, inserted: tkRes.inserted, updated: tkRes.updated, skipped: tkRes.skipped, sortHonored: tk.sortHonored, incremental: Boolean(tasksSince), unavailable: tk.unavailable },
       nps: { scanned: np.scanned, changed: np.changed.size, inserted: npRes.inserted, updated: npRes.updated, skipped: npRes.skipped, sortHonored: np.sortHonored, incremental: Boolean(npsSince), unavailable: np.unavailable },
       objectives: { scanned: ob.scanned, plans: planRes.inserted + planRes.updated, objectives: objRes.inserted + objRes.updated, fullScan: true, unavailable: ob.unavailable },
-      licenses: { scanned: lic.scanned, companiesUpdated: licCompaniesUpdated, usageMetrics: licUsage, fullScan: true, unavailable: lic.unavailable },
+      licenses: { scanned: lic.scanned, usageMetrics: licUsage, fullScan: true, unavailable: lic.unavailable },
       dimensions,
       unavailableObjects,
     };
