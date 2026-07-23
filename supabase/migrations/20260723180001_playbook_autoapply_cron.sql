@@ -1,0 +1,12 @@
+-- ============================================================================
+-- Compass V2 — schedule playbook auto-apply (iteration2.md §5, §7).
+-- ----------------------------------------------------------------------------
+-- Hourly pg_cron → pg_net → the playbook-autoapply Edge Function (via the
+-- public.invoke_edge helper + Vault secrets from 20260714090006_cron.sql):
+--   • auto-apply live templates whose entry_criteria match a company
+--   • archive runs whose exit_criteria match (keep/cancel remaining)
+--   • re-evaluate active runs (step/group/dependency conditions)
+-- Offset to :20 to avoid piling on the :00/:30 integration polls.
+-- cron.schedule() upserts by job name, so re-running is safe.
+-- ============================================================================
+select cron.schedule('compass-playbook-autoapply', '20 * * * *', $$select public.invoke_edge('playbook-autoapply')$$);
