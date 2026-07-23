@@ -8,6 +8,13 @@ import {
   fetchSuccessPlans, fetchObjectives,
   insertActivityRow, insertDealRow, insertSuccessPlanRow, insertObjectiveRows,
   updateObjectiveRow, updateSuccessPlanRow,
+  fetchHealthSnapshots, fetchNotifications, fetchProducts, fetchCompanyProducts,
+  fetchLibraryItems, fetchDashboards, fetchDashboardWidgets, fetchAskThreads, fetchAskMessages,
+  updateCompanyRow, updateTaskRow, updateDealRow, updateAlertRow, updateProfileRow,
+  insertNpsRow, upsertHealthSnapshotRow, insertNotificationRow, markNotificationsReadRows,
+  insertLibraryItemRow, incrementLibraryDownloadRow, insertDashboardRow, updateDashboardRow,
+  insertDashboardWidgetRow, deleteDashboardWidgetRow, insertAskThreadRow, insertAskMessageRow,
+  upsertCompanyProductRow,
 } from './realStore';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
@@ -110,17 +117,17 @@ export function useAlertRules() {
   return useQuery({ queryKey: ['alertRules'], queryFn: () => (isDemoMode ? getDb().alertRules : getDb().alertRules.slice(0, 0)) });
 }
 
-// Health snapshots aren't produced by the Planhat sync (health is computed) →
-// empty in real mode until a compute job populates them.
+// Health snapshots aren't produced by the Planhat sync, but useRecomputeHealth
+// writes them in real mode → read live so recomputed scores/trends appear.
 export function useHealthSnapshots(companyId?: string) {
   return useQuery({
     queryKey: ['healthSnapshots', companyId],
-    queryFn: () =>
+    queryFn: async () =>
       isDemoMode
         ? (all('healthSnapshots') as HealthSnapshot[])
             .filter((h) => !companyId || h.companyId === companyId)
             .sort((a, b) => +new Date(a.snapshotDate) - +new Date(b.snapshotDate))
-        : ([] as HealthSnapshot[]),
+        : fetchHealthSnapshots(companyId),
   });
 }
 
@@ -157,6 +164,11 @@ export function useCreateNps() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async (n: { companyId: string; score: number; comment?: string; contactId?: string | null }) => {
+      if (!isDemoMode) {
+        const row = await insertNpsRow({ companyId: n.companyId, contactId: n.contactId ?? null, score: n.score, comment: n.comment ?? null });
+        await insertActivityRow({ companyId: n.companyId, contactIds: n.contactId ? [n.contactId] : [], userId: profile.id, type: 'nps', title: `NPS ${n.score}`, snippet: n.comment ?? '', occurredAt: new Date().toISOString(), meta: { sentiment: n.score / 100, logged_manually: true } });
+        return row;
+      }
       const row = insert('npsResponses', { id: newId('nps'), companyId: n.companyId, contactId: n.contactId ?? null, score: n.score, comment: n.comment ?? null, respondedAt: new Date().toISOString() } as NpsResponse);
       insert('activities', { id: newId('ac'), companyId: n.companyId, contactIds: n.contactId ? [n.contactId] : [], userId: profile.id, type: 'nps', title: `NPS ${n.score}`, snippet: n.comment ?? '', occurredAt: new Date().toISOString(), meta: { sentiment: n.score / 100, logged_manually: true } } as Activity);
       return row;
@@ -203,7 +215,8 @@ export function useProfiles() {
 export function useUpdateCompany() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Company> }) => update('companies', id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Company> }) =>
+      isDemoMode ? update('companies', id, patch) : await updateCompanyRow(id, patch as Record<string, unknown>),
     onSuccess: (_r, v) => {
       qc.invalidateQueries({ queryKey: ['companies'] });
       qc.invalidateQueries({ queryKey: ['company', v.id] });
@@ -217,12 +230,21 @@ export function useRecomputeHealth() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (companyId: string) => {
-      const company = (all('companies') as Company[]).find((c) => c.id === companyId);
-      if (!company || !company.segment) return null;
-      const contacts = (all('contacts') as Contact[]).filter((c) => c.companyId === companyId);
-      const tickets = (all('tickets') as Ticket[]).filter((t) => t.companyId === companyId && t.status === 'open');
-      const nps = (all('npsResponses') as NpsResponse[]).filter((n) => n.companyId === companyId);
-      const usage = (all('usageMetrics') as UsageMetric[]).filter((u) => u.companyId === companyId);
+      let company: Company | null | undefined;
+      let contacts: Contact[]; let tickets: Ticket[]; let nps: NpsResponse[]; let usage: UsageMetric[];
+      if (!isDemoMode) {
+        company = await fetchCompany(companyId);
+        if (!company || !company.segment) return null;
+        [contacts, nps, usage] = await Promise.all([fetchContacts(companyId), fetchNps(companyId), fetchUsageMetrics(companyId)]);
+        tickets = []; // no ticketing integration in real mode yet
+      } else {
+        company = (all('companies') as Company[]).find((c) => c.id === companyId);
+        if (!company || !company.segment) return null;
+        contacts = (all('contacts') as Contact[]).filter((c) => c.companyId === companyId);
+        tickets = (all('tickets') as Ticket[]).filter((t) => t.companyId === companyId && t.status === 'open');
+        nps = (all('npsResponses') as NpsResponse[]).filter((n) => n.companyId === companyId);
+        usage = (all('usageMetrics') as UsageMetric[]).filter((u) => u.companyId === companyId);
+      }
       const latestUsage = (key: string) => usage.filter((u) => u.metricKey === key).sort((a, b) => +new Date(b.metricDate) - +new Date(a.metricDate))[0]?.value ?? null;
 
       const inputs: HealthInputs = {
@@ -252,7 +274,14 @@ export function useRecomputeHealth() {
       const weights = DEFAULT_HEALTH_WEIGHTS[company.segment];
       const res = computeHealth(inputs, weights, DEFAULT_HEALTH_THRESHOLDS);
       const prev = company.healthScore ?? res.overall;
-      update('companies', companyId, { healthScore: res.overall, healthBand: res.band, healthDeltaWow: res.overall - prev, healthUpdatedAt: new Date().toISOString() });
+      const healthPatch = { healthScore: res.overall, healthBand: res.band, healthDeltaWow: res.overall - prev, healthUpdatedAt: new Date().toISOString() };
+      if (!isDemoMode) {
+        await updateCompanyRow(companyId, healthPatch);
+        // upsert today's snapshot (real mode has no pre-existing weekly snapshot)
+        await upsertHealthSnapshotRow({ companyId, snapshotDate: new Date().toISOString().slice(0, 10), isWeekly: false, overall: res.overall, band: res.band, deltaWow: res.overall - prev, dimensions: res.dimensions, source: 'recompute' });
+        return res;
+      }
+      update('companies', companyId, healthPatch);
       // refresh the current weekly snapshot's dimensions
       const snaps = (all('healthSnapshots') as HealthSnapshot[]).filter((s) => s.companyId === companyId);
       const current = snaps.filter((s) => Object.keys(s.dimensions ?? {}).length > 0).sort((a, b) => +new Date(b.snapshotDate) - +new Date(a.snapshotDate))[0];
@@ -270,7 +299,10 @@ export function useRecomputeHealth() {
 export function useToggleTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (task: Task) => update('tasks', task.id, { completedAt: task.completedAt ? null : new Date().toISOString() }),
+    mutationFn: async (task: Task) => {
+      const patch = { completedAt: task.completedAt ? null : new Date().toISOString() };
+      return isDemoMode ? update('tasks', task.id, patch) : updateTaskRow(task.id, patch);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
   });
 }
@@ -280,7 +312,14 @@ export function useCreateTask() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async (t: Partial<Task> & { companyId: string; title: string }) => {
-      if (!isDemoMode) { await insertTaskRow({ ...t, creatorId: profile.id }); return null; }
+      if (!isDemoMode) {
+        const assigneeId = t.assigneeId ?? profile.id;
+        await insertTaskRow({ ...t, creatorId: profile.id });
+        if (assigneeId !== profile.id) {
+          await insertNotificationRow({ userId: assigneeId, kind: 'task_assigned', title: 'New task assigned', body: `${profile.fullName} assigned you "${t.title}".`, link: `/company/${t.companyId}?tab=tasks` });
+        }
+        return null;
+      }
       const assigneeId = t.assigneeId ?? profile.id;
       const row = insert('tasks', {
         id: newId('ts'), companyId: t.companyId, assigneeId, creatorId: profile.id,
@@ -330,7 +369,8 @@ export function useLogActivity() {
 export function useUpdateAlert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Alert> }) => update('alerts', id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Alert> }) =>
+      isDemoMode ? update('alerts', id, patch) : await updateAlertRow(id, patch as Record<string, unknown>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
   });
 }
@@ -338,7 +378,8 @@ export function useUpdateAlert() {
 export function useUpdateDeal() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Deal> }) => update('deals', id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Deal> }) =>
+      isDemoMode ? update('deals', id, patch) : await updateDealRow(id, patch as Record<string, unknown>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['deals'] }),
   });
 }
@@ -435,6 +476,13 @@ export function useUpdateSuccessPlan() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<SuccessPlan> }) => {
+      if (!isDemoMode) {
+        const p = await updateSuccessPlanRow(id, patch as Record<string, unknown>);
+        if (p && patch.status) {
+          await insertActivityRow({ companyId: p.companyId, contactIds: [], userId: profile.id, type: 'system', title: `Success plan "${p.name}" → ${patch.status}`, snippet: `Status changed by ${profile.fullName}`, occurredAt: new Date().toISOString(), meta: {} });
+        }
+        return p;
+      }
       const before = (all('successPlans') as SuccessPlan[]).find((p) => p.id === id);
       const p = update('successPlans', id, patch);
       if (p && patch.status && before && before.status !== patch.status) {
@@ -479,12 +527,12 @@ export function useContact(id: string | undefined) {
 
 // Products & whitespace (C5)
 export function useProducts() {
-  return useQuery({ queryKey: ['products'], queryFn: () => (isDemoMode ? (all('products') as Product[]) : ([] as Product[])) });
+  return useQuery({ queryKey: ['products'], queryFn: async () => (isDemoMode ? (all('products') as Product[]) : fetchProducts()) });
 }
 export function useCompanyProducts(companyId?: string) {
   return useQuery({
     queryKey: ['companyProducts', companyId],
-    queryFn: () => (isDemoMode ? (all('companyProducts') as CompanyProduct[]).filter((cp) => !companyId || cp.companyId === companyId) : ([] as CompanyProduct[])),
+    queryFn: async () => (isDemoMode ? (all('companyProducts') as CompanyProduct[]).filter((cp) => !companyId || cp.companyId === companyId) : fetchCompanyProducts(companyId)),
   });
 }
 export function useUpsertCompanyProduct() {
@@ -492,6 +540,7 @@ export function useUpsertCompanyProduct() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async ({ companyId, productId, status, arr }: { companyId: string; productId: string; status: CompanyProductStatus; arr?: number | null }) => {
+      if (!isDemoMode) return upsertCompanyProductRow({ companyId, productId, status, arr, updatedBy: profile.id });
       const existing = (all('companyProducts') as CompanyProduct[]).find((cp) => cp.companyId === companyId && cp.productId === productId);
       if (existing) return update('companyProducts', existing.id, { status, arr: arr ?? existing.arr, updatedBy: profile.id });
       return insert('companyProducts', { id: newId('cp'), companyId, productId, status, arr: arr ?? null, note: null, updatedBy: profile.id } as CompanyProduct);
@@ -526,7 +575,7 @@ export function useNotifications() {
   const { profile } = useSession();
   return useQuery({
     queryKey: ['notifications', profile.id],
-    queryFn: () => (isDemoMode ? (all('notifications') as Notification[]).filter((n) => n.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)) : ([] as Notification[])),
+    queryFn: async () => (isDemoMode ? (all('notifications') as Notification[]).filter((n) => n.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)) : fetchNotifications(profile.id)),
   });
 }
 export function useMarkNotificationsRead() {
@@ -534,6 +583,7 @@ export function useMarkNotificationsRead() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async (id?: string) => {
+      if (!isDemoMode) return markNotificationsReadRows(profile.id, id);
       const rows = (all('notifications') as Notification[]).filter((n) => n.userId === profile.id && !n.readAt && (!id || n.id === id));
       rows.forEach((n) => update('notifications', n.id, { readAt: new Date().toISOString() }));
       return rows.length;
@@ -545,25 +595,32 @@ export function useCreateNotification() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (n: { userId: string; kind: Notification['kind']; title: string; body?: string; link?: string }) =>
-      insert('notifications', { id: newId('ntf'), userId: n.userId, kind: n.kind, title: n.title, body: n.body ?? null, link: n.link ?? null, readAt: null, createdAt: new Date().toISOString() } as Notification),
+      isDemoMode
+        ? insert('notifications', { id: newId('ntf'), userId: n.userId, kind: n.kind, title: n.title, body: n.body ?? null, link: n.link ?? null, readAt: null, createdAt: new Date().toISOString() } as Notification)
+        : await insertNotificationRow({ userId: n.userId, kind: n.kind, title: n.title, body: n.body ?? null, link: n.link ?? null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
   });
 }
 
 // Library (D4)
 export function useLibraryItems() {
-  return useQuery({ queryKey: ['library'], queryFn: () => (isDemoMode ? (all('libraryItems') as LibraryItem[]) : ([] as LibraryItem[])) });
+  return useQuery({ queryKey: ['library'], queryFn: async () => (isDemoMode ? (all('libraryItems') as LibraryItem[]) : fetchLibraryItems()) });
 }
 export function useLibraryMutations() {
   const qc = useQueryClient();
   const { profile } = useSession();
   const create = useMutation({
     mutationFn: async (it: Partial<LibraryItem> & { title: string; itemType: LibraryItem['itemType'] }) =>
-      insert('libraryItems', { id: newId('lib'), title: it.title, description: it.description ?? null, itemType: it.itemType, url: it.url ?? null, storagePath: it.storagePath ?? null, tags: it.tags ?? [], segments: it.segments ?? [], uploadedBy: profile.id, downloadCount: 0, createdAt: new Date().toISOString() } as LibraryItem),
+      isDemoMode
+        ? insert('libraryItems', { id: newId('lib'), title: it.title, description: it.description ?? null, itemType: it.itemType, url: it.url ?? null, storagePath: it.storagePath ?? null, tags: it.tags ?? [], segments: it.segments ?? [], uploadedBy: profile.id, downloadCount: 0, createdAt: new Date().toISOString() } as LibraryItem)
+        : await insertLibraryItemRow({ title: it.title, description: it.description ?? null, itemType: it.itemType, url: it.url ?? null, storagePath: it.storagePath ?? null, tags: it.tags ?? [], segments: it.segments ?? [], uploadedBy: profile.id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
   });
   const incrementDownload = useMutation({
-    mutationFn: async (id: string) => { const it = (all('libraryItems') as LibraryItem[]).find((x) => x.id === id); return update('libraryItems', id, { downloadCount: (it?.downloadCount ?? 0) + 1 }); },
+    mutationFn: async (id: string) => {
+      if (!isDemoMode) return incrementLibraryDownloadRow(id);
+      const it = (all('libraryItems') as LibraryItem[]).find((x) => x.id === id); return update('libraryItems', id, { downloadCount: (it?.downloadCount ?? 0) + 1 });
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['library'] }),
   });
   return { create, incrementDownload };
@@ -575,7 +632,7 @@ export function useDashboards() {
   return useQuery({
     queryKey: ['dashboards', profile.id],
     queryFn: () => {
-      if (!isDemoMode) return [] as Dashboard[];
+      if (!isDemoMode) return fetchDashboards(); // RLS scopes to owner/shared
       const teamIds = new Set(allProfiles.filter((p) => p.managerId === profile.id).map((p) => p.id));
       return (all('dashboards') as Dashboard[]).filter((d) =>
         d.ownerId === profile.id || profile.role === 'admin' || (d.shared && (d.ownerId != null && teamIds.has(d.ownerId))) || (d.shared && d.ownerId === profile.id));
@@ -585,27 +642,29 @@ export function useDashboards() {
 export function useDashboardWidgets(dashboardId?: string) {
   return useQuery({
     queryKey: ['dashboardWidgets', dashboardId],
-    queryFn: () => (isDemoMode ? (all('dashboardWidgets') as DashboardWidget[]).filter((w) => !dashboardId || w.dashboardId === dashboardId) : ([] as DashboardWidget[])),
+    queryFn: async () => (isDemoMode ? (all('dashboardWidgets') as DashboardWidget[]).filter((w) => !dashboardId || w.dashboardId === dashboardId) : fetchDashboardWidgets(dashboardId)),
   });
 }
 export function useDashboardMutations() {
   const qc = useQueryClient();
   const { profile } = useSession();
   const createDashboard = useMutation({
-    mutationFn: async (name: string) => insert('dashboards', { id: newId('dash'), name, ownerId: profile.id, shared: false, layout: null } as Dashboard),
+    mutationFn: async (name: string) => isDemoMode ? insert('dashboards', { id: newId('dash'), name, ownerId: profile.id, shared: false, layout: null } as Dashboard) : await insertDashboardRow(name, profile.id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboards'] }),
   });
   const updateDashboard = useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Dashboard> }) => update('dashboards', id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Dashboard> }) => isDemoMode ? update('dashboards', id, patch) : await updateDashboardRow(id, patch as Record<string, unknown>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboards'] }),
   });
   const addWidget = useMutation({
     mutationFn: async (w: Partial<DashboardWidget> & { dashboardId: string; kind: DashboardWidget['kind']; dataset: string; title: string }) =>
-      insert('dashboardWidgets', { id: newId('dw'), dashboardId: w.dashboardId, position: w.position ?? { x: 0, y: 0, w: 2, h: 2 }, kind: w.kind, dataset: w.dataset, groupBy: w.groupBy ?? null, measure: w.measure ?? 'count', filter: w.filter ?? {}, title: w.title } as DashboardWidget),
+      isDemoMode
+        ? insert('dashboardWidgets', { id: newId('dw'), dashboardId: w.dashboardId, position: w.position ?? { x: 0, y: 0, w: 2, h: 2 }, kind: w.kind, dataset: w.dataset, groupBy: w.groupBy ?? null, measure: w.measure ?? 'count', filter: w.filter ?? {}, title: w.title } as DashboardWidget)
+        : await insertDashboardWidgetRow({ dashboardId: w.dashboardId, position: w.position, kind: w.kind, dataset: w.dataset, groupBy: w.groupBy ?? null, measure: w.measure ?? 'count', filter: w.filter ?? {}, title: w.title }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboardWidgets'] }),
   });
   const removeWidget = useMutation({
-    mutationFn: async (id: string) => { remove('dashboardWidgets', id); return id; },
+    mutationFn: async (id: string) => { if (!isDemoMode) { await deleteDashboardWidgetRow(id); return id; } remove('dashboardWidgets', id); return id; },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboardWidgets'] }),
   });
   return { createDashboard, updateDashboard, addWidget, removeWidget };
@@ -616,13 +675,13 @@ export function useAskThreads() {
   const { profile } = useSession();
   return useQuery({
     queryKey: ['askThreads', profile.id],
-    queryFn: () => (isDemoMode ? (all('askThreads') as AskThread[]).filter((t) => t.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)) : ([] as AskThread[])),
+    queryFn: async () => (isDemoMode ? (all('askThreads') as AskThread[]).filter((t) => t.userId === profile.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)) : fetchAskThreads(profile.id)),
   });
 }
 export function useAskMessages(threadId?: string) {
   return useQuery({
     queryKey: ['askMessages', threadId],
-    queryFn: () => (isDemoMode ? (all('askMessages') as AskMessage[]).filter((m) => m.threadId === threadId).sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)) : ([] as AskMessage[])),
+    queryFn: async () => (isDemoMode ? (all('askMessages') as AskMessage[]).filter((m) => m.threadId === threadId).sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)) : fetchAskMessages(threadId)),
   });
 }
 
@@ -631,6 +690,13 @@ export function useAskSend() {
   const { profile } = useSession();
   return useMutation({
     mutationFn: async ({ threadId, message, answer, toolCalls }: { threadId?: string; message: string; answer: string; toolCalls?: { name: string }[] }) => {
+      if (!isDemoMode) {
+        let tid = threadId;
+        if (!tid) { const t = await insertAskThreadRow(profile.id, message.split(' ').slice(0, 6).join(' ')); tid = t.id; }
+        await insertAskMessageRow({ threadId: tid, role: 'user', content: message });
+        await insertAskMessageRow({ threadId: tid, role: 'assistant', content: answer, toolCalls: toolCalls ?? null });
+        return tid;
+      }
       let tid = threadId;
       if (!tid) {
         tid = newId('akt');
@@ -653,7 +719,8 @@ export function useChangelog() {
 export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Profile> }) => update('profiles', id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Profile> }) =>
+      isDemoMode ? update('profiles', id, patch) : await updateProfileRow(id, patch as Record<string, unknown>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
   });
 }
