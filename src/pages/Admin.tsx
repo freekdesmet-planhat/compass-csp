@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { PageHeader, PageBody } from '@/components/PageHeader';
-import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Switch, Slider, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Tabs, TabsList, TabsTrigger, TabsContent, EmptyState, DeltaArrow } from '@/components/ui';
+import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Switch, Slider, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Tabs, TabsList, TabsTrigger, TabsContent, EmptyState, DeltaArrow, Dialog, DialogContent, DialogTitle } from '@/components/ui';
 import { DataTable } from '@/components/DataTable';
-import { useProfiles, useAlertRules, useVisibleCompanies } from '@/lib/hooks';
+import { useProfiles, useAlertRules, useVisibleCompanies, useUpdateProfile } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
+import { supabase, isDemoMode } from '@/lib/supabase';
+import { insert, newId } from '@/lib/store';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS, HEALTH_DIMENSIONS, SEGMENT_LABELS, type Segment } from '@/lib/segments';
 import { PLAYBOOKS } from '@/lib/playbooks';
 import { ImportWizard } from './Import';
-import { Shield, Plug, ChevronDown } from 'lucide-react';
+import { Shield, Plug, ChevronDown, UserPlus } from 'lucide-react';
 import type { Profile } from '@/lib/types';
 
 export default function AdminPage() {
@@ -45,8 +48,83 @@ export default function AdminPage() {
 function UsersTab() {
   const { data: profiles = [] } = useProfiles();
   const { toast } = useToast();
+  const qc = useQueryClient();
+  const updateProfile = useUpdateProfile();
   const nameById = new Map(profiles.map((p) => [p.id, p.fullName]));
+
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [role, setRole] = useState<'csm' | 'manager' | 'admin'>('csm');
+  const [segment, setSegment] = useState<'none' | 'scaled' | 'mid_touch' | 'enterprise'>('none');
+  const [managerId, setManagerId] = useState('none');
+  const reset = () => { setEmail(''); setFullName(''); setRole('csm'); setSegment('none'); setManagerId('none'); };
+
+  const invite = async () => {
+    const e = email.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { toast('Enter a valid email'); return; }
+    setBusy(true);
+    try {
+      const seg = segment === 'none' ? null : segment;
+      const mgr = managerId === 'none' ? null : managerId;
+      if (isDemoMode || !supabase) {
+        insert('profiles', { id: newId('usr'), email: e, fullName: fullName.trim() || e, avatarUrl: null, role, segment: seg, managerId: mgr, timezone: 'UTC', digestHour: 7, isActive: true } as Profile);
+        toast('User added (demo mode)');
+      } else {
+        const { data, error } = await supabase.functions.invoke('invite-user', {
+          body: { email: e, fullName: fullName.trim(), role, segment: seg, managerId: mgr, redirectTo: window.location.origin },
+        });
+        if (error) throw new Error(error.message || 'Invite failed');
+        if (!data?.ok) throw new Error(data?.error || 'Invite failed');
+        toast(`Invite sent to ${e}`);
+      }
+      qc.invalidateQueries({ queryKey: ['profiles'] });
+      setOpen(false); reset();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Invite failed');
+    } finally { setBusy(false); }
+  };
+
+  const managers = profiles.filter((p) => p.role === 'manager' || p.role === 'admin');
+
   return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <Button variant="primary" size="sm" onClick={() => setOpen(true)}><UserPlus className="h-3.5 w-3.5" /> Invite user</Button>
+      </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogTitle>Invite user</DialogTitle>
+          <p className="mb-3 text-sm text-muted-foreground">They'll get a magic-link email to set their password. Their profile is created with the role below.</p>
+          <div className="space-y-3">
+            <Field label="Email"><Input type="email" value={email} onChange={(ev) => setEmail(ev.target.value)} placeholder="teammate@planhat.com" /></Field>
+            <Field label="Full name"><Input value={fullName} onChange={(ev) => setFullName(ev.target.value)} placeholder="Jane Doe" /></Field>
+            <Field label="Role">
+              <Select value={role} onValueChange={(v) => setRole(v as typeof role)}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="csm">CSM</SelectItem><SelectItem value="manager">Manager</SelectItem><SelectItem value="admin">Admin</SelectItem></SelectContent>
+              </Select>
+            </Field>
+            <Field label="Segment">
+              <Select value={segment} onValueChange={(v) => setSegment(v as typeof segment)}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="none">—</SelectItem><SelectItem value="scaled">Scaled</SelectItem><SelectItem value="mid_touch">Mid-touch</SelectItem><SelectItem value="enterprise">Enterprise</SelectItem></SelectContent>
+              </Select>
+            </Field>
+            <Field label="Manager">
+              <Select value={managerId} onValueChange={setManagerId}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="none">—</SelectItem>{managers.map((m) => <SelectItem key={m.id} value={m.id}>{m.fullName}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="primary" disabled={busy} onClick={invite}>{busy ? 'Sending…' : 'Send invite'}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     <DataTable
       rows={profiles}
       rowKey={(p) => p.id}
@@ -54,13 +132,13 @@ function UsersTab() {
         { key: 'name', header: 'Name', render: (p) => <span className="font-medium">{p.fullName}</span> },
         { key: 'email', header: 'Email', render: (p) => <span className="text-muted-foreground">{p.email}</span> },
         { key: 'role', header: 'Role', width: '16%', render: (p) => (
-          <Select defaultValue={p.role} onValueChange={() => toast('Role updated')}>
+          <Select defaultValue={p.role} onValueChange={(v) => { updateProfile.mutate({ id: p.id, patch: { role: v as Profile['role'] } }); toast('Role updated'); }}>
             <SelectTrigger className="h-7 w-28"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="csm">CSM</SelectItem><SelectItem value="manager">Manager</SelectItem><SelectItem value="admin">Admin</SelectItem></SelectContent>
           </Select>
         ) },
         { key: 'segment', header: 'Segment', width: '16%', render: (p) => (
-          <Select defaultValue={p.segment ?? 'none'} onValueChange={() => toast('Segment updated')}>
+          <Select defaultValue={p.segment ?? 'none'} onValueChange={(v) => { updateProfile.mutate({ id: p.id, patch: { segment: v === 'none' ? null : (v as Segment) } }); toast('Segment updated'); }}>
             <SelectTrigger className="h-7 w-32"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="none">—</SelectItem><SelectItem value="scaled">Scaled</SelectItem><SelectItem value="mid_touch">Mid-touch</SelectItem><SelectItem value="enterprise">Enterprise</SelectItem></SelectContent>
           </Select>
@@ -69,7 +147,12 @@ function UsersTab() {
         { key: 'active', header: 'Active', width: '8%', render: (p) => <Chip tone={p.isActive ? 'green' : 'neutral'}>{p.isActive ? 'yes' : 'no'}</Chip> },
       ]}
     />
+    </div>
   );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block"><span className="mb-1 block text-sm font-medium text-muted-foreground">{label}</span>{children}</label>;
 }
 
 function HealthConfigTab() {
