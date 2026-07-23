@@ -7,7 +7,7 @@ import type {
   Company, Contact, Profile, Task, Activity, Deal, NpsResponse, UsageMetric,
   SuccessPlan, SuccessPlanObjective, Alert, HealthSnapshot, Notification, Product,
   CompanyProduct, LibraryItem, Dashboard, DashboardWidget, AskThread, AskMessage,
-  PlaybookTemplate, PlaybookGroup, PlaybookStep,
+  PlaybookTemplate, PlaybookGroup, PlaybookStep, PlaybookRun, PlaybookRunStep,
 } from './types';
 
 function db() {
@@ -612,4 +612,45 @@ export async function deletePlaybookStepRow(id: string): Promise<void> {
 }
 export async function reorderPlaybookStepsRows(updates: { id: string; position: number; groupId: string | null }[]): Promise<void> {
   await Promise.all(updates.map((u) => db().from('playbook_template_steps').update({ position: u.position, group_id: u.groupId }).eq('id', u.id)));
+}
+
+// ── V2 Playbook instances (runs / run steps) + playbook-origin tasks ─────────
+export function rowToPlaybookRun(r: any): PlaybookRun {
+  return { id: r.id, templateId: r.template_id ?? null, companyId: r.company_id, targetModel: r.target_model ?? 'company', targetRecordId: r.target_record_id ?? null, startedBy: r.started_by ?? null, status: r.status ?? 'active', startedAt: r.started_at ?? null, completedAt: r.completed_at ?? null, entrySnapshot: r.entry_snapshot ?? {}, archivedAt: r.archived_at ?? null, archiveAction: r.archive_action ?? null };
+}
+export function rowToPlaybookRunStep(r: any): PlaybookRunStep {
+  return { id: r.id, runId: r.run_id, templateStepId: r.template_step_id ?? null, groupId: r.group_id ?? null, taskId: r.task_id ?? null, stepType: r.step_type ?? 'task', position: r.position ?? 0, activationState: r.activation_state ?? 'active', skipReason: r.skip_reason ?? null, startDate: r.start_date ?? null, dueDate: r.due_date ?? null };
+}
+export async function fetchPlaybookRuns(companyId: string): Promise<PlaybookRun[]> {
+  const { data, error } = await db().from('playbook_runs').select('*').eq('company_id', companyId).neq('status', 'archived').order('started_at', { ascending: false });
+  if (error) throw error; return (data ?? []).map(rowToPlaybookRun);
+}
+export async function fetchPlaybookRunSteps(runId: string): Promise<PlaybookRunStep[]> {
+  const { data, error } = await db().from('playbook_run_steps').select('*').eq('run_id', runId).order('position');
+  if (error) throw error; return (data ?? []).map(rowToPlaybookRunStep);
+}
+export async function insertPlaybookRunRow(p: { templateId: string; companyId: string; targetModel: string; targetRecordId: string | null; startedBy: string | null; entrySnapshot: unknown }): Promise<PlaybookRun> {
+  const { data, error } = await db().from('playbook_runs').insert({ template_id: p.templateId, company_id: p.companyId, target_model: p.targetModel, target_record_id: p.targetRecordId, started_by: p.startedBy, status: 'active', entry_snapshot: p.entrySnapshot }).select().single();
+  if (error) throw error; return rowToPlaybookRun(data);
+}
+export async function insertPlaybookRunStepRow(p: { runId: string; templateStepId: string; groupId: string | null; taskId: string | null; stepType: string; position: number; activationState: string; startDate: string | null; dueDate: string | null }): Promise<PlaybookRunStep> {
+  const { data, error } = await db().from('playbook_run_steps').insert({ run_id: p.runId, template_step_id: p.templateStepId, group_id: p.groupId, task_id: p.taskId, step_type: p.stepType, position: p.position, activation_state: p.activationState, start_date: p.startDate, due_date: p.dueDate }).select().single();
+  if (error) throw error; return rowToPlaybookRunStep(data);
+}
+export async function updatePlaybookRunStepRow(id: string, patch: { activationState?: string; skipReason?: string | null; taskId?: string | null }): Promise<void> {
+  const row: Record<string, any> = {};
+  if ('activationState' in patch) row.activation_state = patch.activationState;
+  if ('skipReason' in patch) row.skip_reason = patch.skipReason;
+  if ('taskId' in patch) row.task_id = patch.taskId;
+  const { error } = await db().from('playbook_run_steps').update(row).eq('id', id); if (error) throw error;
+}
+export async function archivePlaybookRunRow(id: string, action = 'manual'): Promise<void> {
+  const { error } = await db().from('playbook_runs').update({ status: 'archived', archived_at: new Date().toISOString(), archive_action: action }).eq('id', id); if (error) throw error;
+}
+export async function insertPlaybookTaskRow(t: { companyId: string; title: string; dueDate: string | null; priority: string; assigneeId: string | null; creatorId: string | null }): Promise<{ id: string }> {
+  const { data, error } = await db().from('tasks').insert({ company_id: t.companyId, title: t.title, due_date: t.dueDate, priority: t.priority, origin: 'playbook', assignee_id: t.assigneeId, creator_id: t.creatorId }).select('id').single();
+  if (error) throw error; return { id: data!.id as string };
+}
+export async function setTaskCompletedRow(id: string, completed: boolean): Promise<void> {
+  const { error } = await db().from('tasks').update({ completed_at: completed ? new Date().toISOString() : null }).eq('id', id); if (error) throw error;
 }

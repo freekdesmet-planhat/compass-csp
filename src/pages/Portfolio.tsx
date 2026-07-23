@@ -9,10 +9,40 @@ import { useToast } from '@/components/toast';
 import { SEGMENT_PRESETS, KPI_LABELS, SEGMENT_LABELS, type Segment } from '@/lib/segments';
 import { fmtCurrency, fmtDateShort, daysUntil, relativeTime, healthFactor } from '@/lib/utils';
 import { paramsToFilter, filterToQuery, applyFilter, describeFilter, isEmptyFilter, type FilterSpec } from '@/lib/portfolioFilters';
-import { X, CheckSquare, Play, Upload } from 'lucide-react';
-import type { Company, Deal, NpsResponse, UsageMetric } from '@/lib/types';
+import { X, CheckSquare, Play, Upload, Workflow } from 'lucide-react';
+import type { Company, Deal, NpsResponse, UsageMetric, Task } from '@/lib/types';
 
 interface KpiCtx { deals: Deal[]; nps: NpsResponse[]; usage: UsageMetric[] }
+
+// "Active Playbook steps due today" (iteration2.md §7) — playbook-origin tasks
+// (created only for active steps) that are incomplete and due on/before today.
+function PlaybookDueToday({ companies, tasks, onOpen }: { companies: Company[]; tasks: Task[]; onOpen: (companyId: string) => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const visible = new Set(companies.map((c) => c.id));
+  const nameById = new Map(companies.map((c) => [c.id, c.name]));
+  const due = tasks.filter((t) => t.origin === 'playbook' && !t.completedAt && visible.has(t.companyId) && t.dueDate && t.dueDate <= today);
+  if (!due.length) return null;
+  return (
+    <Card className="mb-4 overflow-hidden">
+      <div className="flex items-center gap-2 border-b px-4 py-2.5">
+        <Workflow className="h-4 w-4 text-[var(--accent)]" />
+        <span className="font-medium">Active playbook steps due today</span>
+        <Chip tone="accent">{due.length}</Chip>
+      </div>
+      <div className="divide-y">
+        {due.slice(0, 8).map((t) => (
+          <button key={t.id} onClick={() => onOpen(t.companyId)} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-panel">
+            <CheckSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex-1 truncate text-sm">{t.title}</span>
+            <span className="truncate text-sm text-muted-foreground">{nameById.get(t.companyId)}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{fmtDateShort(t.dueDate)}</span>
+          </button>
+        ))}
+        {due.length > 8 && <div className="px-4 py-1.5 text-xs text-muted-foreground">+{due.length - 8} more</div>}
+      </div>
+    </Card>
+  );
+}
 
 export default function PortfolioPage() {
   const { profile, allProfiles } = useSession();
@@ -134,6 +164,7 @@ export default function PortfolioPage() {
         <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           {kpis.map((k) => <KpiCard key={k} kpiKey={k} companies={filtered} tasks={allTasks} ctx={ctx} presetSegment={presetSegment} onNavigate={(spec) => navigate(`/portfolio${filterToQuery(spec)}`)} />)}
         </div>
+        <PlaybookDueToday companies={filtered} tasks={allTasks} onOpen={(cid) => navigate(`/company/${cid}?tab=playbooks`)} />
         {/* Scaled one-to-many motion (D8c) */}
         {(presetSegment === 'scaled' || filter.segment === 'scaled') && <ScaledBulkBar companies={filtered} />}
         {isLoading ? (

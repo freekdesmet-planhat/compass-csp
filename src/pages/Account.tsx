@@ -22,12 +22,13 @@ import { TimelineTab } from './account/TimelineTab';
 import { ContactsTab } from './account/ContactsTab';
 import { DealsTab } from './account/DealsTab';
 import { UsageTab } from './account/UsageTab';
+import { PlaybooksTab } from './account/PlaybooksTab';
 import { Composer } from './account/Composer';
 import { TaskModal, LogInteractionModal, TASK_TYPE_META } from '@/components/modals';
 import { WebsiteLink } from '@/components/WebsiteLink';
 import type { Contact, ObjectiveStatus } from '@/lib/types';
 
-const TABS = ['overview', 'health', 'usage', 'timeline', 'success-plan', 'deals', 'contacts', 'emails', 'meetings', 'tasks', 'notes', 'nps'] as const;
+const TABS = ['overview', 'health', 'usage', 'timeline', 'success-plan', 'playbooks', 'deals', 'contacts', 'emails', 'meetings', 'tasks', 'notes', 'nps'] as const;
 
 export default function AccountPage() {
   const { id } = useParams();
@@ -80,6 +81,7 @@ export default function AccountPage() {
           <TabsContent value="usage"><UsageTab company={company} /></TabsContent>
           <TabsContent value="timeline"><TimelineTab companyId={company.id} /></TabsContent>
           <TabsContent value="success-plan"><SuccessPlanTab companyId={company.id} /></TabsContent>
+          <TabsContent value="playbooks"><PlaybooksTab company={company} /></TabsContent>
           <TabsContent value="deals"><DealsTab company={company} /></TabsContent>
           <TabsContent value="contacts"><ContactsTab companyId={company.id} /></TabsContent>
           <TabsContent value="emails"><EmailsTab companyId={company.id} /></TabsContent>

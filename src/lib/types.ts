@@ -607,3 +607,32 @@ export interface PlaybookStep {
   body?: unknown;
 }
 export interface EmailTemplate { id: string; name: string; subject?: string | null; body: unknown; tags: string[] }
+
+export type RunStepState = 'hidden' | 'muted' | 'active' | 'done' | 'ignored' | 'skipped';
+export interface PlaybookRun {
+  id: string;
+  templateId?: string | null;
+  companyId: string;
+  targetModel: string;
+  targetRecordId?: string | null;
+  startedBy?: string | null;
+  status: string;              // active | completed | archived
+  startedAt?: string | null;
+  completedAt?: string | null;
+  entrySnapshot?: unknown;
+  archivedAt?: string | null;
+  archiveAction?: string | null;
+}
+export interface PlaybookRunStep {
+  id: string;
+  runId: string;
+  templateStepId?: string | null;
+  groupId?: string | null;
+  taskId?: string | null;
+  stepType: PlaybookStepType;
+  position: number;
+  activationState: RunStepState;
+  skipReason?: string | null;
+  startDate?: string | null;
+  dueDate?: string | null;
+}

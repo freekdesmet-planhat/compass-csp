@@ -19,7 +19,11 @@ import {
   insertPlaybookTemplateRow, updatePlaybookTemplateRow, deletePlaybookTemplateRow,
   insertPlaybookGroupRow, updatePlaybookGroupRow, deletePlaybookGroupRow,
   insertPlaybookStepRow, updatePlaybookStepRow, deletePlaybookStepRow, reorderPlaybookStepsRows,
+  fetchPlaybookRuns, fetchPlaybookRunSteps, insertPlaybookRunRow, insertPlaybookRunStepRow,
+  updatePlaybookRunStepRow, archivePlaybookRunRow, insertPlaybookTaskRow, setTaskCompletedRow,
 } from './realStore';
+import { planRun, reevaluateRun } from './playbookRunner';
+import { companyRuleContext } from './rules';
 import { useSession } from './session';
 import { computeHealth, type HealthInputs } from './health';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS } from './segments';
@@ -29,7 +33,7 @@ import type {
   MeetingPrep, Digest, EmailMessage, Note, Profile,
   Notification, Product, CompanyProduct, CompanyProductStatus, LibraryItem, Dashboard,
   DashboardWidget, AskThread, AskMessage, ChangelogEntry,
-  PlaybookTemplate, PlaybookGroup, PlaybookStep,
+  PlaybookTemplate, PlaybookGroup, PlaybookStep, PlaybookRun, PlaybookRunStep, RunStepState,
 } from './types';
 
 // Visibility: which owner ids the current profile can see companies for.
@@ -777,4 +781,91 @@ export function usePlaybookMutations() {
   const deleteStep = useMutation({ mutationFn: async (id: string) => { if (!isDemoMode) return deletePlaybookStepRow(id); remove('playbookSteps', id); }, onSuccess: inval });
   const reorderSteps = useMutation({ mutationFn: async (updates: { id: string; position: number; groupId: string | null }[]) => { if (!isDemoMode) return reorderPlaybookStepsRows(updates); updates.forEach((u) => update('playbookSteps', u.id, { position: u.position, groupId: u.groupId } as Partial<PlaybookStep>)); }, onSuccess: inval });
   return { createTemplate, updateTemplate, deleteTemplate, createGroup, updateGroup, deleteGroup, createStep, updateStep, deleteStep, reorderSteps };
+}
+
+// ── V2 Playbook instances: runs / run-steps + the runner (iteration2.md §7) ──
+export function usePlaybookRuns(companyId?: string) {
+  return useQuery({
+    queryKey: ['playbookRuns', companyId], enabled: !!companyId,
+    queryFn: async () => (isDemoMode ? (all('playbookRuns') as PlaybookRun[]).filter((r) => r.companyId === companyId && r.status !== 'archived') : fetchPlaybookRuns(companyId!)),
+  });
+}
+export function usePlaybookRunSteps(runId?: string) {
+  return useQuery({
+    queryKey: ['playbookRunSteps', runId], enabled: !!runId,
+    queryFn: async () => (isDemoMode ? (all('playbookRunSteps') as PlaybookRunStep[]).filter((s) => s.runId === runId).sort((a, b) => a.position - b.position) : fetchPlaybookRunSteps(runId!)),
+  });
+}
+export function usePlaybookRunMutations() {
+  const qc = useQueryClient();
+  const { profile } = useSession();
+  const inval = () => { qc.invalidateQueries({ queryKey: ['playbookRuns'] }); qc.invalidateQueries({ queryKey: ['playbookRunSteps'] }); qc.invalidateQueries({ queryKey: ['tasks'] }); };
+  const assigneeFor = (ownerRef: PlaybookStep['ownerRef'], company: Company) => (ownerRef?.value === 'account_owner' ? (company.ownerId ?? profile.id) : profile.id);
+
+  const applyPlaybook = useMutation({
+    mutationFn: async ({ template, groups, steps, company }: { template: PlaybookTemplate; groups: PlaybookGroup[]; steps: PlaybookStep[]; company: Company }) => {
+      const ctx = companyRuleContext(company);
+      const planned = planRun(steps, groups, ctx, new Date());
+      if (!isDemoMode) {
+        const run = await insertPlaybookRunRow({ templateId: template.id, companyId: company.id, targetModel: template.targetModel, targetRecordId: company.id, startedBy: profile.id, entrySnapshot: ctx });
+        for (const p of planned) {
+          let taskId: string | null = null;
+          if (p.stepType === 'task' && p.activationState === 'active') {
+            const t = await insertPlaybookTaskRow({ companyId: company.id, title: p.title, dueDate: p.dueDate, priority: p.priority, assigneeId: assigneeFor(p.ownerRef, company), creatorId: profile.id });
+            taskId = t.id;
+          }
+          await insertPlaybookRunStepRow({ runId: run.id, templateStepId: p.templateStepId, groupId: p.groupId, taskId, stepType: p.stepType, position: p.position, activationState: p.activationState, startDate: p.startDate, dueDate: p.dueDate });
+        }
+        return run;
+      }
+      const run = insert('playbookRuns', { id: newId('pr'), templateId: template.id, companyId: company.id, targetModel: template.targetModel, targetRecordId: company.id, startedBy: profile.id, status: 'active', startedAt: new Date().toISOString(), completedAt: null, entrySnapshot: ctx, archivedAt: null, archiveAction: null } as PlaybookRun);
+      for (const p of planned) {
+        let taskId: string | null = null;
+        if (p.stepType === 'task' && p.activationState === 'active') {
+          const t = insert('tasks', { id: newId('ts'), companyId: company.id, assigneeId: assigneeFor(p.ownerRef, company), creatorId: profile.id, title: p.title, description: null, taskType: 'todo', dueDate: p.dueDate, completedAt: null, priority: p.priority as Task['priority'], origin: 'playbook', sourceActivityId: null, successPlanObjectiveId: null, contactId: null } as Task);
+          taskId = t.id;
+        }
+        insert('playbookRunSteps', { id: newId('prs'), runId: run.id, templateStepId: p.templateStepId, groupId: p.groupId, taskId, stepType: p.stepType, position: p.position, activationState: p.activationState, skipReason: null, startDate: p.startDate, dueDate: p.dueDate } as PlaybookRunStep);
+      }
+      return run;
+    }, onSuccess: inval,
+  });
+
+  const markStep = useMutation({
+    mutationFn: async ({ step, state, skipReason }: { step: PlaybookRunStep; state: RunStepState; skipReason?: string }) => {
+      const done = state === 'done' || state === 'ignored';
+      if (!isDemoMode) {
+        await updatePlaybookRunStepRow(step.id, { activationState: state, skipReason: skipReason ?? null });
+        if (step.taskId) await setTaskCompletedRow(step.taskId, done);
+        return;
+      }
+      update('playbookRunSteps', step.id, { activationState: state, skipReason: skipReason ?? null });
+      if (step.taskId) update('tasks', step.taskId, { completedAt: done ? new Date().toISOString() : null });
+    }, onSuccess: inval,
+  });
+
+  const reevaluate = useMutation({
+    mutationFn: async ({ runSteps, templateSteps, groups, company }: { runSteps: PlaybookRunStep[]; templateSteps: PlaybookStep[]; groups: PlaybookGroup[]; company: Company }) => {
+      const ctx = companyRuleContext(company);
+      const stepById = new Map(templateSteps.map((s) => [s.id, s]));
+      const groupById = new Map(groups.map((g) => [g.id, g]));
+      const changes = reevaluateRun(runSteps, stepById, groupById, ctx);
+      for (const c of changes) {
+        const rs = runSteps.find((r) => r.id === c.id)!;
+        let taskId = rs.taskId ?? null;
+        if (c.activationState === 'active' && rs.stepType === 'task' && !rs.taskId) {
+          const tpl = rs.templateStepId ? stepById.get(rs.templateStepId) : undefined;
+          if (!isDemoMode) { const t = await insertPlaybookTaskRow({ companyId: company.id, title: tpl?.title ?? 'Step', dueDate: rs.dueDate ?? null, priority: tpl?.priority ?? 'normal', assigneeId: assigneeFor(tpl?.ownerRef ?? { kind: 'role', value: 'account_owner' }, company), creatorId: profile.id }); taskId = t.id; }
+          else { const t = insert('tasks', { id: newId('ts'), companyId: company.id, assigneeId: assigneeFor(tpl?.ownerRef ?? { kind: 'role', value: 'account_owner' }, company), creatorId: profile.id, title: tpl?.title ?? 'Step', description: null, taskType: 'todo', dueDate: rs.dueDate ?? null, completedAt: null, priority: (tpl?.priority ?? 'normal') as Task['priority'], origin: 'playbook', sourceActivityId: null, successPlanObjectiveId: null, contactId: null } as Task); taskId = t.id; }
+        }
+        if (!isDemoMode) await updatePlaybookRunStepRow(c.id, { activationState: c.activationState, taskId });
+        else update('playbookRunSteps', c.id, { activationState: c.activationState, taskId });
+      }
+      return changes.length;
+    }, onSuccess: inval,
+  });
+
+  const archiveRun = useMutation({ mutationFn: async (runId: string) => { if (!isDemoMode) return archivePlaybookRunRow(runId); update('playbookRuns', runId, { status: 'archived', archivedAt: new Date().toISOString() }); }, onSuccess: inval });
+
+  return { applyPlaybook, markStep, reevaluate, archiveRun };
 }
