@@ -68,6 +68,36 @@ function mapObjectiveStatus(v: any): string {
   return "not_started";
 }
 
+// Planhat "Customer Type" custom field → Compass segment enum.
+function mapSegment(v: any): string | undefined {
+  const s = snakeLower(v);
+  if (!s) return undefined;
+  if (s.includes("scal")) return "scaled";
+  if (s.includes("enterprise")) return "enterprise";
+  if (s.includes("mid") || s.includes("touch")) return "mid_touch";
+  return undefined;
+}
+// Health band from a 0–100 score (mirrors default thresholds red<40, amber<70).
+function bandFor(score: number): string {
+  return score < 40 ? "red" : score < 70 ? "amber" : "green";
+}
+// Planhat sentimentScore is tenant-dependent scale → normalise to 1–10.
+function normSentiment(v: any): number | null {
+  const n = num(v);
+  if (n == null) return null;
+  let s: number;
+  if (n >= -1 && n <= 1) s = (n + 1) * 5;
+  else if (n >= 0 && n <= 10) s = n;
+  else if (n >= -100 && n <= 100) s = (n + 100) / 20;
+  else s = n;
+  return Math.round(Math.max(1, Math.min(10, s)) * 10) / 10;
+}
+// Planhat csmScore is 1–5 → Compass value_score is 1–10.
+function csmToValue(v: any): number | undefined {
+  const n = num(v);
+  return n == null ? undefined : Math.round(Math.max(1, Math.min(10, n * 2)) * 10) / 10;
+}
+
 // ── Planhat paging + cursor ───────────────────────────────────────────────────
 // Carries the HTTP status so callers can treat a permission/absent object (403/
 // 404) as "skip this object" rather than aborting the whole sync run.
@@ -193,12 +223,18 @@ async function writeChanged(supabase: SB, table: string, changed: Map<string, an
       if (error) throw new Error(`${table} insert batch [${i}]: ${error.message}`);
       inserted += toInsert.length;
     }
-    for (const r of chunk) {
-      const id = idBySid.get(r.sid);
-      if (!id) continue;
-      const { error } = await supabase.from(table).update(r.patch).eq("id", id);
-      if (error) throw new Error(`${table} update (planhat ${r.sid}): ${error.message}`);
-      updated++;
+    // Per-row updates, run in bounded-concurrency batches — a full re-scan of an
+    // existing object (e.g. 5862 contacts) is all updates; sequential awaits would
+    // blow the edge wall-clock.
+    const toUpdate = chunk.filter((r) => idBySid.has(r.sid));
+    const CONC = 25;
+    for (let j = 0; j < toUpdate.length; j += CONC) {
+      const slice = toUpdate.slice(j, j + CONC);
+      const results = await Promise.all(slice.map((r) => supabase.from(table).update(r.patch).eq("id", idBySid.get(r.sid)!)));
+      for (let k = 0; k < results.length; k++) {
+        if (results[k].error) throw new Error(`${table} update (planhat ${slice[k].sid}): ${results[k].error!.message}`);
+      }
+      updated += slice.length;
     }
   }
   return { inserted, updated, skipped };
@@ -269,12 +305,28 @@ serve(async (req) => {
     const coRes = await writeChanged(supabase, "companies", co.changed, (c) => {
       const ownerId = resolveUser(c.owner ?? cf(c, "CSM"));
       if (ownerId) companiesOwned++;
+      const hScore = c.h != null ? Math.round((num(c.h) ?? 0) * 10) : undefined; // Planhat h is 0–10
       const patch: Record<string, unknown> = {
         name: c.name,
-        arr: c.arr != null ? Number(c.arr) : undefined,
-        mrr: c.mrr != null ? Number(c.mrr) : undefined,
+        arr: num(c.arr) ?? num(c.arrTotal) ?? undefined,
+        mrr: num(c.mr) ?? num(c.mrTotal) ?? num(c.mrr) ?? undefined, // Planhat uses `mr`, not `mrr`
         domains: Array.isArray(c.domains) ? c.domains : c.domain ? [c.domain] : undefined,
         owner_id: ownerId ?? undefined,
+        status: str(c.status) ?? undefined,
+        phase: str(c.phase) ?? undefined,
+        segment: mapSegment(cf(c, "Customer Type")),
+        tier: str(cf(c, "Customer Tier")) ?? undefined,
+        region: str(cf(c, "Region")) ?? undefined,
+        renewal_date: c.renewalDate ? dateOnly(c.renewalDate) : undefined,
+        renewal_arr: num(c.renewalArr) ?? undefined,
+        value_score: csmToValue(c.csmScore),
+        sentiment_assessment: normSentiment(c.sentimentScore) ?? undefined,
+        health_score: hScore,
+        health_band: hScore != null ? bandFor(hScore) : undefined,
+        health_delta_wow: c.hDiff != null ? Math.round((num(c.hDiff) ?? 0) * 10) : undefined,
+        health_updated_at: c.hDiffDate ? iso(c.hDiffDate) : (hScore != null ? new Date().toISOString() : undefined),
+        last_touch_at: c.lastTouch ? iso(c.lastTouch) : undefined,
+        last_touch_type: str(c.lastTouchType) ?? undefined,
       };
       for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
       return patch;
@@ -296,7 +348,10 @@ serve(async (req) => {
         email: e.email ?? undefined, other_emails: Array.isArray(e.otherEmails) ? e.otherEmails : undefined,
         phone: e.phone ?? undefined, title: e.position ?? undefined,
         linkedin_url: e.linkedInUrl ?? e.linkedinUrl ?? undefined,
+        department: str(cf(e, "Department")) ?? undefined,
+        seniority: str(cf(e, "Level")) ?? undefined,
         last_active_at: e.lastActive ? iso(e.lastActive) : undefined,
+        last_touch_at: e.lastTouch ? iso(e.lastTouch) : undefined,
         archived: typeof e.archived === "boolean" ? e.archived : undefined,
       };
       for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
@@ -423,6 +478,26 @@ serve(async (req) => {
     });
     await advance("npsSince", np.maxTs, np.unavailable);
 
+    // Derive contacts.nps_latest / nps_latest_at from the synced NPS responses —
+    // Planhat has no enduser-level NPS field; the score lives on the nps record
+    // and the contact is matched by email.
+    let npsContactsUpdated = 0;
+    const npsByContact = new Map<string, { score: number; at: string }>();
+    for (const [, n] of np.changed) {
+      const email = str(n.email)?.toLowerCase();
+      const cId = resolveContact(n.endUserId ?? n.contactId ?? n.enduser) ?? (email ? contactByEmail.get(email) ?? null : null);
+      const score = num(n.nps ?? n.score);
+      if (!cId || score == null) continue;
+      const at = (n.npsDate ?? n.date ?? n.dateSent ?? n.createdAt) ? iso(n.npsDate ?? n.date ?? n.dateSent ?? n.createdAt) : new Date().toISOString();
+      const prev = npsByContact.get(cId);
+      if (!prev || at > prev.at) npsByContact.set(cId, { score: Math.round(score), at });
+    }
+    for (const [cId, { score, at }] of npsByContact) {
+      const { error } = await supabase.from("contacts").update({ nps_latest: score, nps_latest_at: at }).eq("id", cId);
+      if (error) throw new Error(`contacts nps_latest (${cId}): ${error.message}`);
+      npsContactsUpdated++;
+    }
+
     // ── Objectives → success_plans (1/company) + success_plan_objectives ─────
     // Full scan: grouping by company needs the whole set.
     const ob = await fetchUpdated("/objectives", "");
@@ -475,10 +550,12 @@ serve(async (req) => {
       usageRows.push({ company_id: companyId, metric_key: "license_mrr", metric_date: dateOnly(when ?? Date.now()), value: mrr });
     }
     let licCompaniesUpdated = 0;
-    for (const [companyId, totals] of agg) {
-      const { error } = await supabase.from("companies").update({ mrr: totals.mrr, arr: Math.round(totals.arr) }).eq("id", companyId);
-      if (error) throw new Error(`licenses: company totals ${companyId}: ${error.message}`);
-      licCompaniesUpdated++;
+    const aggEntries = [...agg.entries()];
+    for (let i = 0; i < aggEntries.length; i += 25) {
+      const slice = aggEntries.slice(i, i + 25);
+      const results = await Promise.all(slice.map(([companyId, totals]) => supabase.from("companies").update({ mrr: totals.mrr, arr: Math.round(totals.arr) }).eq("id", companyId)));
+      for (let k = 0; k < results.length; k++) if (results[k].error) throw new Error(`licenses: company totals ${slice[k][0]}: ${results[k].error!.message}`);
+      licCompaniesUpdated += slice.length;
     }
     const licUsage = await upsertUsageMetrics(supabase, usageRows);
 
