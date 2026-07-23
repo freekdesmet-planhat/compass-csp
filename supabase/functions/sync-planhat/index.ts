@@ -359,9 +359,14 @@ serve(async (req) => {
     });
     await advance("contactsSince", eu.maxTs, eu.unavailable);
 
-    // ── Users → profiles (UPDATE-only; match by planhat_user_id then email) ──
+    // ── Users → profiles: UPDATE matched (by planhat_user_id/email) and CREATE a
+    //    Compass account for unmatched Planhat users so team members added in
+    //    Planhat appear automatically. New accounts get role 'csm' (admin can
+    //    reassign) and email_confirm=true; they sign in via password reset — no
+    //    email is sent here. Creation is capped per run as a runaway guard. ────
     const pu = await fetchUpdated("/users", usersSince);
-    let usersUpdated = 0, usersSkipped = 0;
+    let usersUpdated = 0, usersSkipped = 0, usersCreated = 0;
+    const MAX_CREATE = 100;
     if (pu.changed.size) {
       const { data: profs, error: profErr } = await supabase.from("profiles").select("id, email, planhat_user_id");
       if (profErr) throw new Error(`users: load profiles: ${profErr.message}`);
@@ -370,19 +375,44 @@ serve(async (req) => {
         if (p.planhat_user_id) byPid.set(String(p.planhat_user_id), p.id as string);
         if (p.email) byEmail.set(String(p.email).toLowerCase(), p.id as string);
       }
+      // Preload existing auth users (email → id) so we LINK an orphan auth account
+      // (invited/created but never given a profile) rather than failing to
+      // re-create it. Paginated; a demo roster is one page.
+      const authByEmail = new Map<string, string>();
+      for (let page = 1; page <= 20; page++) {
+        const { data: list, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+        if (error) break;
+        for (const au of list?.users ?? []) if (au.email) authByEmail.set(au.email.toLowerCase(), au.id);
+        if (!list || (list.users?.length ?? 0) < 1000) break;
+      }
       for (const [planhatId, u] of pu.changed) {
         const email = String(u.email ?? "").toLowerCase().trim();
+        const fullName = u.nickName || [u.firstName, u.lastName].filter(Boolean).join(" ") || null;
+        const avatar = u.profilePicture ?? u.profilePic ?? u.image ?? u.avatar ?? null;
         const profileId = byPid.get(planhatId) ?? (email ? byEmail.get(email) : undefined);
-        if (!profileId) { usersSkipped++; continue; }
-        const patch: Record<string, unknown> = {
-          full_name: u.nickName || [u.firstName, u.lastName].filter(Boolean).join(" ") || undefined,
-          avatar_url: u.profilePicture ?? u.profilePic ?? u.image ?? u.avatar ?? undefined,
-          planhat_user_id: planhatId,
-        };
-        for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
-        const { error } = await supabase.from("profiles").update(patch).eq("id", profileId);
-        if (error) throw new Error(`profiles update (planhat ${planhatId}): ${error.message}`);
-        usersUpdated++;
+        if (profileId) {
+          const patch: Record<string, unknown> = { full_name: fullName ?? undefined, avatar_url: avatar ?? undefined, planhat_user_id: planhatId };
+          for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
+          const { error } = await supabase.from("profiles").update(patch).eq("id", profileId);
+          if (error) throw new Error(`profiles update (planhat ${planhatId}): ${error.message}`);
+          usersUpdated++;
+          continue;
+        }
+        // Unmatched → link an existing auth user by email, else create one.
+        if (!email || usersCreated >= MAX_CREATE) { usersSkipped++; continue; }
+        let authId = authByEmail.get(email);
+        if (!authId) {
+          const { data: created, error: cErr } = await supabase.auth.admin.createUser({ email, email_confirm: true, user_metadata: { full_name: fullName } });
+          if (cErr || !created?.user?.id) { usersSkipped++; continue; }
+          authId = created.user.id;
+        }
+        const { error: insErr } = await supabase.from("profiles").upsert(
+          { id: authId, email, full_name: fullName, avatar_url: avatar, role: "csm", is_active: true, planhat_user_id: planhatId },
+          { onConflict: "id" },
+        );
+        if (insErr) throw new Error(`profiles upsert (planhat ${planhatId}): ${insErr.message}`);
+        byPid.set(planhatId, authId); byEmail.set(email, authId);
+        usersCreated++;
       }
     }
     await advance("usersSince", pu.maxTs, pu.unavailable);
@@ -604,7 +634,7 @@ serve(async (req) => {
     return {
       companies: { scanned: co.scanned, changed: co.changed.size, inserted: coRes.inserted, updated: coRes.updated, owned: companiesOwned, sortHonored: co.sortHonored, incremental: Boolean(since), unavailable: co.unavailable },
       contacts: { scanned: eu.scanned, changed: eu.changed.size, inserted: euRes.inserted, updated: euRes.updated, skipped: euRes.skipped, sortHonored: eu.sortHonored, incremental: Boolean(contactsSince), unavailable: eu.unavailable },
-      users: { scanned: pu.scanned, changed: pu.changed.size, updated: usersUpdated, skipped: usersSkipped, sortHonored: pu.sortHonored, incremental: Boolean(usersSince), unavailable: pu.unavailable },
+      users: { scanned: pu.scanned, changed: pu.changed.size, updated: usersUpdated, created: usersCreated, skipped: usersSkipped, sortHonored: pu.sortHonored, incremental: Boolean(usersSince), unavailable: pu.unavailable },
       deals: { scanned: op.scanned, changed: op.changed.size, inserted: opRes.inserted, updated: opRes.updated, skipped: opRes.skipped, sortHonored: op.sortHonored, incremental: Boolean(dealsSince), unavailable: op.unavailable },
       activities: { scanned: cv.scanned, changed: cv.changed.size, inserted: cvRes.inserted, updated: cvRes.updated, skipped: cvRes.skipped, sortHonored: cv.sortHonored, incremental: Boolean(activitiesSince), unavailable: cv.unavailable },
       tasks: { scanned: tk.scanned, changed: tk.changed.size, inserted: tkRes.inserted, updated: tkRes.updated, skipped: tkRes.skipped, sortHonored: tk.sortHonored, incremental: Boolean(tasksSince), unavailable: tk.unavailable },

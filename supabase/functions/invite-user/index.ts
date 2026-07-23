@@ -42,11 +42,23 @@ serve(async (req) => {
     data: { full_name: fullName },
     redirectTo,
   });
+  let userId = invited?.user?.id;
+  let note: string | undefined;
   if (invErr) {
-    const msg = /already|registered|exists/i.test(invErr.message) ? "A user with that email already exists" : invErr.message;
-    return json({ ok: false, error: msg }, 200);
+    // Already-exists is common when an earlier attempt created the auth user but
+    // no profile. Link it (find the id) and create the profile below rather than
+    // failing — self-heals orphaned accounts.
+    if (!/already|registered|exists/i.test(invErr.message)) return json({ ok: false, error: invErr.message }, 200);
+    for (let page = 1; page <= 20 && !userId; page++) {
+      const { data: list, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+      if (error) break;
+      const hit = (list?.users ?? []).find((u) => (u.email ?? "").toLowerCase() === email);
+      if (hit) userId = hit.id;
+      if (!list || (list.users?.length ?? 0) < 1000) break;
+    }
+    if (!userId) return json({ ok: false, error: "A user with that email already exists" }, 200);
+    note = "User already existed — linked and profile ensured (no new invite email sent).";
   }
-  const userId = invited?.user?.id;
   if (!userId) return json({ ok: false, error: "invite returned no user id" }, 200);
 
   // ── 2. create the profile row (no auth→profiles trigger in this project) ────
@@ -56,5 +68,5 @@ serve(async (req) => {
   );
   if (pErr) return json({ ok: false, error: `invite sent but profile create failed: ${pErr.message}` }, 200);
 
-  return json({ ok: true, userId, email, role });
+  return json({ ok: true, userId, email, role, note });
 });
