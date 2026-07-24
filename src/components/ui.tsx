@@ -288,8 +288,9 @@ export function HealthDot({ band, className }: { band: HealthBand | null; classN
 }
 export function HealthChip({ score, band, delta }: { score: number | null; band: HealthBand | null; delta?: number | null }) {
   const tone = band ?? 'neutral';
+  const title = `Health score ${score ?? '—'}/100${delta != null && delta !== 0 ? `, ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} vs last week` : ''}`;
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1.5" title={title} aria-label={title}>
       <Chip tone={tone as 'green' | 'amber' | 'red' | 'neutral'}>
         <HealthDot band={band} />
         <span className="tnum">{score ?? '—'}</span>

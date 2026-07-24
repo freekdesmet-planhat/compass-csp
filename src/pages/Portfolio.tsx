@@ -1,15 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
 import { DataTable, type Column } from '@/components/DataTable';
-import { HealthChip, HealthDot, Chip, Avatar, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Card, Button } from '@/components/ui';
+import { HealthChip, HealthDot, Chip, Avatar, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Card, Button } from '@/components/ui';
 import { useVisibleCompanies, useTasks, useDeals, useNps, useUsageMetrics, useCreateTask } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
 import { SEGMENT_PRESETS, KPI_LABELS, SEGMENT_LABELS, type Segment } from '@/lib/segments';
 import { fmtCurrency, fmtDateShort, daysUntil, relativeTime, healthFactor } from '@/lib/utils';
 import { paramsToFilter, filterToQuery, applyFilter, describeFilter, isEmptyFilter, type FilterSpec } from '@/lib/portfolioFilters';
-import { X, CheckSquare, Play, Upload, Workflow } from 'lucide-react';
+import { X, CheckSquare, Play, Upload, Workflow, Search } from 'lucide-react';
 import type { Company, Deal, NpsResponse, UsageMetric, Task } from '@/lib/types';
 
 interface KpiCtx { deals: Deal[]; nps: NpsResponse[]; usage: UsageMetric[] }
@@ -58,8 +58,22 @@ export default function PortfolioPage() {
   const isManager = profile.role === 'manager' || profile.role === 'admin';
   const filter = useMemo(() => paramsToFilter(params), [params]);
 
+  const [search, setSearch] = useState('');
   const filtered = useMemo(() => applyFilter(companies, filter), [companies, filter]);
+  const searched = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return filtered;
+    return filtered.filter((c) => c.name?.toLowerCase().includes(q) || (c.domains ?? []).some((d) => d.toLowerCase().includes(q)));
+  }, [filtered, search]);
   const openTaskCount = (companyId: string) => allTasks.filter((t) => t.companyId === companyId && !t.completedAt).length;
+  // Next touch = earliest open task due date for the account (fallback: synced nextTouchAt).
+  const nextTouch = (c: Company) => {
+    const due = allTasks
+      .filter((t) => t.companyId === c.id && !t.completedAt && t.dueDate)
+      .map((t) => t.dueDate!)
+      .sort();
+    return due[0] ?? c.nextTouchAt ?? null;
+  };
 
   const presetSegment: Segment = profile.segment ?? (filter.segment as Segment) ?? 'mid_touch';
   const kpis = SEGMENT_PRESETS[presetSegment].kpis;
@@ -90,7 +104,7 @@ export default function PortfolioPage() {
         </div>
       ),
     },
-    { key: 'health', header: 'Health', width: '10%', sortValue: (c) => c.healthScore, render: (c) => <HealthChip score={c.healthScore} band={c.healthBand} delta={c.healthDeltaWow} /> },
+    { key: 'health', header: 'Health · ΔWoW', width: '10%', sortValue: (c) => c.healthScore, render: (c) => <HealthChip score={c.healthScore} band={c.healthBand} delta={c.healthDeltaWow} /> },
     { key: 'arr', header: 'ARR', align: 'right', width: '9%', sortValue: (c) => c.arr, render: (c) => fmtCurrency(c.arr) },
     {
       key: 'renewal', header: 'Renewal', width: '12%', sortValue: (c) => c.renewalDate,
@@ -107,7 +121,7 @@ export default function PortfolioPage() {
     },
     { key: 'phase', header: 'Phase', width: '10%', sortValue: (c) => c.phase, render: (c) => <span className="capitalize text-muted-foreground">{c.phase?.replace(/_/g, ' ') ?? '—'}</span> },
     { key: 'lastTouch', header: 'Last touch', width: '9%', sortValue: (c) => c.lastTouchAt, render: (c) => <span className="text-muted-foreground">{relativeTime(c.lastTouchAt)}</span> },
-    { key: 'nextTouch', header: 'Next touch', width: '9%', sortValue: (c) => c.nextTouchAt, render: (c) => <span className="text-muted-foreground">{c.nextTouchAt ? fmtDateShort(c.nextTouchAt) : '—'}</span> },
+    { key: 'nextTouch', header: 'Next touch', width: '9%', sortValue: (c) => nextTouch(c), render: (c) => { const nt = nextTouch(c); return <span className="text-muted-foreground">{nt ? fmtDateShort(nt) : '—'}</span>; } },
     { key: 'tasks', header: 'Tasks', align: 'right', width: '6%', sortValue: (c) => openTaskCount(c.id), render: (c) => openTaskCount(c.id) || '—' },
     {
       key: 'owner', header: 'Owner', width: '13%', sortValue: (c) => c.ownerId,
@@ -122,9 +136,13 @@ export default function PortfolioPage() {
     <div>
       <PageHeader
         title="Portfolio"
-        subtitle={`${filtered.length} accounts${profile.segment ? ` · ${SEGMENT_LABELS[profile.segment]}` : ''}`}
+        subtitle={`${searched.length} accounts${profile.segment ? ` · ${SEGMENT_LABELS[profile.segment]}` : ''}`}
         actions={
           <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input aria-label="Search accounts" placeholder="Search accounts…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 w-48 pl-7" />
+            </div>
             {isManager && (
               <Select value={filter.owner ?? 'all'} onValueChange={(v) => setKey('owner', v)}>
                 <SelectTrigger className="w-36"><SelectValue placeholder="Owner" /></SelectTrigger>
@@ -170,7 +188,7 @@ export default function PortfolioPage() {
         {isLoading ? (
           <div className="text-sm text-muted-foreground">Loading…</div>
         ) : (
-          <DataTable columns={columns} rows={filtered} rowKey={(c) => c.id} onRowClick={(c) => navigate(`/company/${c.id}`)} defaultSort={{ key: 'health', dir: 'asc' }} />
+          <DataTable columns={columns} rows={searched} rowKey={(c) => c.id} onRowClick={(c) => navigate(`/company/${c.id}`)} defaultSort={{ key: 'health', dir: 'asc' }} pageSize={50} />
         )}
       </PageBody>
     </div>

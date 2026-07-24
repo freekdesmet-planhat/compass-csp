@@ -188,7 +188,7 @@ function UserSwitcher({ collapsed }: { collapsed: boolean }) {
   return (
     <div className="border-t p-2">
       <Popover>
-        <PopoverTrigger className={cn('flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-white/60', collapsed && 'justify-center px-0')}>
+        <PopoverTrigger aria-label="Account menu" className={cn('flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-white/60', collapsed && 'justify-center px-0')}>
           <Avatar name={profile.fullName} url={profile.avatarUrl} />
           {!collapsed && (
             <>

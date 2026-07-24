@@ -167,7 +167,7 @@ export default function RenewalsPage() {
                     {cards.map((d) => {
                       const c = companyById.get(d.companyId);
                       return (
-                        <button key={d.id} onClick={() => navigate(`/company/${d.companyId}?tab=deals`)} className="w-full rounded-lg border bg-white p-2.5 text-left hover:border-[var(--accent)]">
+                        <button key={d.id} aria-label={`Open ${c?.name ?? 'account'} deal`} onClick={() => navigate(`/company/${d.companyId}?tab=deals`)} className="w-full rounded-lg border bg-white p-2.5 text-left hover:border-[var(--accent)]">
                           <div className="flex items-center gap-1.5"><HealthDot band={c?.healthBand ?? null} /><span className="flex-1 truncate font-medium">{c?.name}</span></div>
                           <div className="mt-1 flex items-center justify-between text-sm text-muted-foreground"><span>{fmtCurrency(d.amount)}</span><span>{fmtDateShort(d.closeDate)}</span></div>
                           {d.nextSteps && <div className="mt-1 truncate text-sm text-muted-foreground">{d.nextSteps.split('\n')[0]}</div>}
