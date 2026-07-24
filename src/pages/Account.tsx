@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import {
   useCompany, useContacts, useActivities, useDeals, useTasks, useNps, useEmails,
   useCalendarEvents, useSuccessPlans, useObjectives, useToggleTask, useCreateSuccessPlan,
-  useUpdateSuccessPlan, useUpdateObjective,
+  useUpdateSuccessPlan, useUpdateObjective, useUpdateCompany,
 } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
@@ -35,6 +35,7 @@ export default function AccountPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { allProfiles } = useSession();
+  const updateCompany = useUpdateCompany();
   const { data: company, isLoading } = useCompany(id);
   const [taskModal, setTaskModal] = useState(false);
   const [logModal, setLogModal] = useState(false);
@@ -57,7 +58,13 @@ export default function AccountPage() {
           <Meta label="ARR" value={fmtCurrency(company.arr)} />
           <Meta label="Renewal" value={rdays != null ? `${fmtDate(company.renewalDate)} · T-${rdays}` : '—'} />
           <Meta label="Phase" value={company.phase?.replace(/_/g, ' ') ?? '—'} />
-          <div className="flex items-center gap-1.5"><Avatar name={owner?.fullName} className="h-5 w-5 text-[10px]" /><span className="text-muted-foreground">{owner?.fullName}</span></div>
+          <div className="flex items-center gap-1.5">
+            <Avatar name={owner?.fullName} className="h-5 w-5 text-[10px]" />
+            <Select value={company.ownerId ?? 'none'} onValueChange={(v) => updateCompany.mutate({ id: company.id, patch: { ownerId: v === 'none' ? null : v } })}>
+              <SelectTrigger className="h-6 border-0 bg-transparent px-1 text-muted-foreground shadow-none hover:bg-panel focus:ring-0"><SelectValue placeholder="Unassigned" /></SelectTrigger>
+              <SelectContent><SelectItem value="none">Unassigned</SelectItem>{allProfiles.map((p) => <SelectItem key={p.id} value={p.id}>{p.fullName}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
           <SegmentBadge segment={company.segment} />
           {company.website && <WebsiteLink url={company.website} />}
           {company.status === 'churned' && <Chip tone="red">churned</Chip>}

@@ -11,16 +11,21 @@ import type { Profile } from './types';
 //   and the Login screen gates the app until a session + profile exist.
 
 interface SessionCtx {
-  profile: Profile;
+  profile: Profile;          // effective identity (impersonated persona if any, else real)
+  realProfile: Profile;      // the authenticated account (same as profile unless impersonating)
   allProfiles: Profile[];
   isDemo: boolean;
-  switchUser: (id: string) => void;
+  isImpersonating: boolean;
+  switchUser: (id: string) => void;      // demo persona switch
+  impersonate: (id: string) => void;     // admin "view as" (real mode)
+  stopImpersonating: () => void;
   signOut: () => void;
 }
 
 const Ctx = createContext<SessionCtx | null>(null);
 
 const DEMO_USER_KEY = 'compass-demo-user';
+const VIEW_AS_KEY = 'compass-view-as';
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   return isDemoMode ? <DemoSessionProvider>{children}</DemoSessionProvider> : <RealSessionProvider>{children}</RealSessionProvider>;
@@ -45,8 +50,9 @@ function DemoSessionProvider({ children }: { children: ReactNode }) {
 
   const profile = profiles.find((p) => p.id === profileId) ?? profiles[0];
 
+  // In demo mode the "switch user" IS the identity, so view-as aliases it.
   return (
-    <Ctx.Provider value={{ profile, allProfiles: profiles, isDemo: true, switchUser, signOut }}>
+    <Ctx.Provider value={{ profile, realProfile: profile, allProfiles: profiles, isDemo: true, isImpersonating: false, switchUser, impersonate: switchUser, stopImpersonating: () => {}, signOut }}>
       {children}
     </Ctx.Provider>
   );
@@ -58,6 +64,7 @@ function RealSessionProvider({ children }: { children: ReactNode }) {
   const [hasSession, setHasSession] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
+  const [impersonatedId, setImpersonatedId] = useState<string | null>(() => (typeof localStorage !== 'undefined' ? localStorage.getItem(VIEW_AS_KEY) : null));
 
   const loadForUser = useCallback(async (userId: string) => {
     try {
@@ -90,8 +97,23 @@ function RealSessionProvider({ children }: { children: ReactNode }) {
     return () => { active = false; sub.subscription.unsubscribe(); };
   }, [loadForUser]);
 
-  const switchUser = useCallback(() => { /* no-op: real users can't impersonate */ }, []);
-  const signOut = useCallback(() => { supabase!.auth.signOut(); }, []);
+  // Admin "view as": only an admin can impersonate, because RLS already returns
+  // ALL rows to an admin — the effective persona is then applied as a client-side
+  // scope (see useVisibleCompanies). A non-admin's data is RLS-bound to itself,
+  // so impersonation is a no-op for them.
+  const impersonate = useCallback((id: string) => {
+    setImpersonatedId((_prev) => id);
+    if (typeof localStorage !== 'undefined') localStorage.setItem(VIEW_AS_KEY, id);
+  }, []);
+  const stopImpersonating = useCallback(() => {
+    setImpersonatedId(null);
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(VIEW_AS_KEY);
+  }, []);
+  const switchUser = useCallback((id: string) => impersonate(id), [impersonate]);
+  const signOut = useCallback(() => {
+    if (typeof localStorage !== 'undefined') { localStorage.removeItem(VIEW_AS_KEY); localStorage.removeItem(DEMO_USER_KEY); }
+    supabase!.auth.signOut(); // clears the sb-*-auth-token; onAuthStateChange resets to the Login screen
+  }, []);
 
   if (loading) {
     return (
@@ -110,8 +132,17 @@ function RealSessionProvider({ children }: { children: ReactNode }) {
     );
   }
 
+  // Effective identity: an admin viewing-as a persona sees that persona; everyone
+  // else is themselves. `profile` here is the authenticated (real) account.
+  const canImpersonate = profile.role === 'admin';
+  const impersonated = canImpersonate && impersonatedId ? allProfiles.find((p) => p.id === impersonatedId) ?? null : null;
+  const effective = impersonated ?? profile;
+
   return (
-    <Ctx.Provider value={{ profile, allProfiles, isDemo: false, switchUser, signOut }}>
+    <Ctx.Provider value={{
+      profile: effective, realProfile: profile, allProfiles, isDemo: false,
+      isImpersonating: !!impersonated, switchUser, impersonate, stopImpersonating, signOut,
+    }}>
       {children}
     </Ctx.Provider>
   );

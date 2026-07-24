@@ -54,11 +54,17 @@ function visibleOwnerScope(profile: Profile, profiles: Profile[]): (companyOwner
 }
 
 export function useVisibleCompanies() {
-  const { profile, allProfiles } = useSession();
+  const { profile, allProfiles, isImpersonating } = useSession();
   return useQuery({
-    queryKey: ['companies', profile.id],
+    queryKey: ['companies', profile.id], // profile.id = effective id → re-runs when view-as changes
     queryFn: async () => {
-      if (!isDemoMode) return fetchCompanies(); // RLS scopes visibility server-side
+      if (!isDemoMode) {
+        const rows = await fetchCompanies(); // RLS: all rows for an admin, own rows otherwise
+        // Admin "view as": narrow the admin's full set to the impersonated persona's scope.
+        if (!isImpersonating) return rows;
+        const scope = visibleOwnerScope(profile, allProfiles);
+        return rows.filter((c) => scope(c.ownerId, c.collaboratorIds));
+      }
       const scope = visibleOwnerScope(profile, allProfiles);
       return (all('companies') as Company[]).filter((c) => scope(c.ownerId, c.collaboratorIds));
     },

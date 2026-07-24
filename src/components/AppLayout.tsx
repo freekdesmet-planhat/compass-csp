@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Home, LayoutGrid, Handshake, CheckSquare, Bell, Target, Users, Gauge, BarChart3,
   Settings, Shield, Compass, Search, ChevronsUpDown, MessageSquare, BookOpen,
-  PanelLeftClose, PanelLeftOpen, Upload, Workflow, Zap,
+  PanelLeftClose, PanelLeftOpen, Upload, Workflow, Zap, LogOut, Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
@@ -114,6 +114,7 @@ export function AppLayout() {
           <div className="flex h-11 shrink-0 items-center justify-end gap-2 border-b bg-white px-4">
             <NotificationBell />
           </div>
+          <ViewAsBanner />
           <main className="flex-1 overflow-y-auto">
             <Outlet />
           </main>
@@ -165,9 +166,25 @@ function SearchButton({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function UserSwitcher({ collapsed }: { collapsed: boolean }) {
-  const { profile, allProfiles, switchUser } = useSession();
+function ViewAsBanner() {
+  const { isImpersonating, profile, stopImpersonating } = useSession();
   const navigate = useNavigate();
+  if (!isImpersonating) return null;
+  return (
+    <div className="flex shrink-0 items-center justify-center gap-2 border-b bg-[var(--amber)]/15 px-4 py-1.5 text-sm text-foreground">
+      <Eye className="h-3.5 w-3.5 text-[var(--amber)]" />
+      Viewing as <b>{profile.fullName}</b>
+      <button onClick={() => { stopImpersonating(); navigate('/'); }} className="ml-1 rounded border bg-white px-2 py-0.5 text-xs font-medium hover:bg-panel">Exit</button>
+    </div>
+  );
+}
+
+function UserSwitcher({ collapsed }: { collapsed: boolean }) {
+  const { profile, realProfile, allProfiles, isDemo, isImpersonating, switchUser, impersonate, stopImpersonating, signOut } = useSession();
+  const navigate = useNavigate();
+  const canViewAs = isDemo || realProfile.role === 'admin';
+  const pickList = isDemo ? allProfiles : allProfiles.filter((p) => p.id !== realProfile.id);
+  const choose = (id: string) => { (isDemo ? switchUser : impersonate)(id); navigate('/'); };
   return (
     <div className="border-t p-2">
       <Popover>
@@ -177,29 +194,45 @@ function UserSwitcher({ collapsed }: { collapsed: boolean }) {
             <>
               <div className="min-w-0 flex-1 overflow-hidden text-left">
                 <div className="truncate text-base font-medium">{profile.fullName}</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {profile.role}{profile.segment ? ` · ${SEGMENT_LABELS[profile.segment]}` : ''}
-                </div>
+                <div className="truncate text-xs text-muted-foreground">{isImpersonating ? `viewing as · ${profile.role}` : (realProfile.email || realProfile.role)}</div>
               </div>
               <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             </>
           )}
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-[260px]">
-          <div className="px-2 py-1 text-xs text-muted-foreground">Switch user (demo — RLS perspective)</div>
-          {allProfiles.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => { switchUser(p.id); navigate('/'); }}
-              className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-base hover:bg-panel', p.id === profile.id && 'bg-panel')}
-            >
-              <Avatar name={p.fullName} />
-              <div className="flex-1 text-left">
-                <div className="truncate font-medium">{p.fullName}</div>
-                <div className="text-xs text-muted-foreground">{p.role}{p.segment ? ` · ${SEGMENT_LABELS[p.segment]}` : ''}</div>
-              </div>
+        <PopoverContent align="start" className="w-[280px] p-1.5">
+          <div className="px-2 py-1.5">
+            <div className="truncate text-sm font-medium">{realProfile.fullName}</div>
+            <div className="truncate text-xs text-muted-foreground">{realProfile.email}</div>
+          </div>
+          <div className="my-1 border-t" />
+          {isImpersonating && (
+            <button onClick={() => { stopImpersonating(); navigate('/'); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-base hover:bg-panel">
+              <Eye className="h-4 w-4 text-[var(--amber)]" /> Stop viewing as {profile.fullName}
             </button>
-          ))}
+          )}
+          {canViewAs && (
+            <>
+              <div className="px-2 py-1 text-xs text-muted-foreground">{isDemo ? 'Switch user (demo — RLS perspective)' : 'View as'}</div>
+              <div className="max-h-64 overflow-y-auto">
+                {pickList.map((p) => (
+                  <button key={p.id} onClick={() => choose(p.id)} className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-base hover:bg-panel', p.id === profile.id && 'bg-panel')}>
+                    <Avatar name={p.fullName} />
+                    <div className="flex-1 text-left">
+                      <div className="truncate font-medium">{p.fullName}</div>
+                      <div className="text-xs text-muted-foreground">{p.role}{p.segment ? ` · ${SEGMENT_LABELS[p.segment]}` : ''}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="my-1 border-t" />
+            </>
+          )}
+          {!isDemo && (
+            <button onClick={signOut} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-base text-[var(--red)] hover:bg-panel">
+              <LogOut className="h-4 w-4" /> Sign out
+            </button>
+          )}
         </PopoverContent>
       </Popover>
     </div>

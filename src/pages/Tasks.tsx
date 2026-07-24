@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
-import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Tabs, TabsList, TabsTrigger, TabsContent, EmptyState, Progress } from '@/components/ui';
+import { Card, CardHeader, CardTitle, CardBody, Chip, Button, Tabs, TabsList, TabsTrigger, TabsContent, EmptyState, Progress, Skeleton } from '@/components/ui';
 import { useTasks, useVisibleCompanies, useToggleTask } from '@/lib/hooks';
 import { TaskModal } from '@/components/modals';
 import { fmtDate, daysUntil, cn } from '@/lib/utils';
@@ -10,8 +10,9 @@ import type { Task } from '@/lib/types';
 
 export default function TasksPage() {
   const navigate = useNavigate();
-  const { data: companies = [] } = useVisibleCompanies();
-  const { data: allTasks = [] } = useTasks();
+  const { data: companies = [], isLoading: companiesLoading } = useVisibleCompanies();
+  const { data: allTasks = [], isLoading: tasksLoading } = useTasks();
+  const loading = companiesLoading || tasksLoading;
   const [groupBy, setGroupBy] = useState<'company' | 'due'>('due');
   const [newTask, setNewTask] = useState(false);
 
@@ -48,10 +49,10 @@ export default function TasksPage() {
             <TabsTrigger value="week">My Week ({buckets.week.length})</TabsTrigger>
             <TabsTrigger value="all">All ({myTasks.length})</TabsTrigger>
           </TabsList>
-          <TabsContent value="day"><TaskList tasks={buckets.day} groupBy={groupBy} companyById={companyById} navigate={navigate} /></TabsContent>
-          <TabsContent value="week"><TaskList tasks={buckets.week} groupBy={groupBy} companyById={companyById} navigate={navigate} /></TabsContent>
+          <TabsContent value="day"><TaskList tasks={buckets.day} groupBy={groupBy} companyById={companyById} navigate={navigate} loading={loading} /></TabsContent>
+          <TabsContent value="week"><TaskList tasks={buckets.week} groupBy={groupBy} companyById={companyById} navigate={navigate} loading={loading} /></TabsContent>
           <TabsContent value="all">
-            <TaskList tasks={myTasks} groupBy={groupBy} companyById={companyById} navigate={navigate} />
+            <TaskList tasks={myTasks} groupBy={groupBy} companyById={companyById} navigate={navigate} loading={loading} />
             <PlaybookProgress tasks={myTasks} companyById={companyById} />
           </TabsContent>
         </Tabs>
@@ -60,8 +61,9 @@ export default function TasksPage() {
   );
 }
 
-function TaskList({ tasks, groupBy, companyById, navigate }: { tasks: Task[]; groupBy: 'company' | 'due'; companyById: Map<string, { name: string }>; navigate: (p: string) => void }) {
+function TaskList({ tasks, groupBy, companyById, navigate, loading }: { tasks: Task[]; groupBy: 'company' | 'due'; companyById: Map<string, { name: string }>; navigate: (p: string) => void; loading?: boolean }) {
   const toggle = useToggleTask();
+  if (loading) return <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>;
   if (!tasks.length) return <EmptyState icon={CheckSquare} title="Nothing here" hint="You're all caught up." />;
 
   const groups: Record<string, Task[]> = {};
