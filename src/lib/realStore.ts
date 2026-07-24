@@ -5,7 +5,7 @@
 import { supabase } from './supabase';
 import type {
   Company, Contact, Profile, Task, Activity, Deal, NpsResponse, UsageMetric,
-  SuccessPlan, SuccessPlanObjective, Alert, HealthSnapshot, Notification, Product,
+  SuccessPlan, SuccessPlanObjective, Alert, AlertRule, HealthSnapshot, Notification, Product,
   CompanyProduct, LibraryItem, Dashboard, DashboardWidget, AskThread, AskMessage,
   PlaybookTemplate, PlaybookGroup, PlaybookStep, PlaybookRun, PlaybookRunStep,
   Automation, AutomationStep, AutomationRun,
@@ -434,6 +434,17 @@ export async function updateDealRow(id: string, patch: Record<string, any>): Pro
 }
 
 const ALERT_COLS: Record<string, string> = { status: 'status', snoozedUntil: 'snoozed_until', ownerId: 'owner_id' };
+export function rowToAlertRule(r: any): AlertRule {
+  return { id: r.id, name: r.name ?? '', description: r.description ?? null, ruleType: r.rule_type ?? '', config: r.config ?? {}, segment: r.segment ?? [], enabled: r.enabled ?? true, severity: r.severity ?? 'warning' };
+}
+export async function fetchAlerts(): Promise<Alert[]> {
+  const rows = await fetchAllRows('alerts', (q) => q.order('created_at', { ascending: false }));
+  return rows.map(rowToAlert);
+}
+export async function fetchAlertRules(): Promise<AlertRule[]> {
+  const rows = await fetchAllRows('alert_rules', (q) => q.order('name', { ascending: true }));
+  return rows.map(rowToAlertRule);
+}
 export async function updateAlertRow(id: string, patch: Record<string, any>): Promise<Alert | null> {
   const row: Record<string, any> = {};
   for (const [k, v] of Object.entries(patch)) { const col = ALERT_COLS[k]; if (col) row[col] = v; }

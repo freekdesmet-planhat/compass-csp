@@ -10,6 +10,7 @@ import {
   updateObjectiveRow, updateSuccessPlanRow,
   fetchHealthSnapshots, fetchNotifications, fetchProducts, fetchCompanyProducts,
   fetchLibraryItems, fetchDashboards, fetchDashboardWidgets, fetchAskThreads, fetchAskMessages,
+  fetchAlerts, fetchAlertRules,
   updateCompanyRow, updateTaskRow, updateDealRow, updateAlertRow, updateProfileRow,
   insertNpsRow, upsertHealthSnapshotRow, insertNotificationRow, markNotificationsReadRows,
   insertLibraryItemRow, incrementLibraryDownloadRow, insertDashboardRow, updateDashboardRow,
@@ -130,11 +131,11 @@ export function useTasks(companyId?: string) {
 
 // Alerts/alert-rules: not generated in real mode yet → empty (no fake data).
 export function useAlerts() {
-  return useQuery({ queryKey: ['alerts'], queryFn: () => (isDemoMode ? (all('alerts') as Alert[]) : ([] as Alert[])) });
+  return useQuery({ queryKey: ['alerts'], queryFn: () => (isDemoMode ? (all('alerts') as Alert[]) : fetchAlerts()) });
 }
 
 export function useAlertRules() {
-  return useQuery({ queryKey: ['alertRules'], queryFn: () => (isDemoMode ? getDb().alertRules : getDb().alertRules.slice(0, 0)) });
+  return useQuery({ queryKey: ['alertRules'], queryFn: () => (isDemoMode ? getDb().alertRules : fetchAlertRules()) });
 }
 
 // Health snapshots aren't produced by the Planhat sync, but useRecomputeHealth
