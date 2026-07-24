@@ -7,6 +7,7 @@
 // by the compute-health edge function so the math is identical everywhere.
 
 import type { HealthBand } from './utils';
+import type { HealthRecommendation } from './types';
 
 export interface HealthInputs {
   // Value to client — manual 1–10 (or null = excluded, weight redistributed)
@@ -194,4 +195,52 @@ export function computeHealth(
   overall = Math.round(overall);
   const band: HealthBand = overall < thresholds.red ? 'red' : overall < thresholds.amber ? 'amber' : 'green';
   return { overall, band, dimensions };
+}
+
+const DIM_LABEL: Record<string, string> = {
+  value: 'Value to client', engagement: 'Engagement', support: 'Support / performance',
+  sentiment: 'Sentiment', usage: 'Usage',
+};
+
+const REC_TEMPLATES: Record<string, HealthRecommendation> = {
+  value: { title: 'Reconfirm value with the sponsor', why: 'Value-to-client is scoring low — realign on the outcomes and ROI the account signed up for.', suggestedTask: { title: 'Schedule a value review with the exec sponsor', dueInDays: 7 } },
+  engagement: { title: 'Re-engage the account', why: 'Engagement is thin — meeting cadence or stakeholder breadth has slipped.', suggestedTask: { title: 'Book a check-in and refresh the stakeholder map', dueInDays: 5 } },
+  support: { title: 'Clear support friction', why: 'Open or slow tickets are dragging the score down.', suggestedTask: { title: 'Review open tickets with the support lead', dueInDays: 3 } },
+  sentiment: { title: 'Address sentiment risk', why: 'Sentiment signals (NPS, exec relationships) are soft.', suggestedTask: { title: 'Run a relationship + sentiment pulse', dueInDays: 7 } },
+  usage: { title: 'Drive adoption', why: 'Usage/adoption is below expectation for the segment.', suggestedTask: { title: 'Plan an enablement or activation push', dueInDays: 10 } },
+};
+
+// Deterministic narrative + recommendations from a computed result. The V1 design
+// had an AI narrate this; in live mode there's no AI job, so we derive an honest
+// explanation directly from the dimension contributions (no invented numbers).
+export function explainHealth(res: HealthResult): { explanation: string; recommendations: HealthRecommendation[] } {
+  const entries = Object.entries(res.dimensions);
+  const present = entries.filter(([, d]) => d.score != null);
+  const excluded = entries.filter(([, d]) => d.score == null).map(([k]) => DIM_LABEL[k] ?? k);
+
+  if (!present.length) {
+    return { explanation: `Overall health is ${res.overall} (${res.band}). No dimension data is available yet — add a value/sentiment rating or connect more signals, then recompute.`, recommendations: [] };
+  }
+
+  const byContribDesc = [...present].sort((a, b) => b[1].contribution - a[1].contribution);
+  const byScoreAsc = [...present].sort((a, b) => (a[1].score ?? 0) - (b[1].score ?? 0));
+  const top = byContribDesc[0];
+  const weakest = byScoreAsc[0];
+
+  const parts = [`Overall health is ${res.overall} (${res.band}).`];
+  parts.push(`${DIM_LABEL[top[0]] ?? top[0]} is the biggest driver, contributing ${top[1].contribution} points (score ${top[1].score}, weight ${top[1].weight}%).`);
+  if (weakest && weakest[0] !== top[0] && (weakest[1].score ?? 100) < 60) {
+    parts.push(`${DIM_LABEL[weakest[0]] ?? weakest[0]} is the weakest area at ${weakest[1].score}/100 — the clearest place to improve.`);
+  }
+  if (excluded.length) {
+    parts.push(`${excluded.join(' and ')} ${excluded.length > 1 ? 'are' : 'is'} excluded for lack of data, so ${excluded.length > 1 ? 'their' : 'its'} weight was redistributed across the rest.`);
+  }
+
+  const recommendations = byScoreAsc
+    .filter(([, d]) => (d.score ?? 100) < 65)
+    .slice(0, 3)
+    .map(([k]) => REC_TEMPLATES[k])
+    .filter(Boolean);
+
+  return { explanation: parts.join(' '), recommendations };
 }

@@ -29,7 +29,7 @@ import { planRun, reevaluateRun } from './playbookRunner';
 import { companyRuleContext } from './rules';
 import type { AutomationStarter } from './automationStarters';
 import { useSession } from './session';
-import { computeHealth, type HealthInputs } from './health';
+import { computeHealth, explainHealth, type HealthInputs } from './health';
 import { DEFAULT_HEALTH_WEIGHTS, DEFAULT_HEALTH_THRESHOLDS } from './segments';
 import type {
   Company, Contact, Activity, Deal, Task, Alert, HealthSnapshot, SuccessPlan,
@@ -293,19 +293,21 @@ export function useRecomputeHealth() {
       };
       const weights = DEFAULT_HEALTH_WEIGHTS[company.segment];
       const res = computeHealth(inputs, weights, DEFAULT_HEALTH_THRESHOLDS);
+      const { explanation, recommendations } = explainHealth(res);
       const prev = company.healthScore ?? res.overall;
       const healthPatch = { healthScore: res.overall, healthBand: res.band, healthDeltaWow: res.overall - prev, healthUpdatedAt: new Date().toISOString() };
       if (!isDemoMode) {
         await updateCompanyRow(companyId, healthPatch);
         // upsert today's snapshot (real mode has no pre-existing weekly snapshot)
-        await upsertHealthSnapshotRow({ companyId, snapshotDate: new Date().toISOString().slice(0, 10), isWeekly: false, overall: res.overall, band: res.band, deltaWow: res.overall - prev, dimensions: res.dimensions, source: 'recompute' });
+        await upsertHealthSnapshotRow({ companyId, snapshotDate: new Date().toISOString().slice(0, 10), isWeekly: false, overall: res.overall, band: res.band, deltaWow: res.overall - prev, dimensions: res.dimensions, explanation, recommendations, source: 'recompute' });
         return res;
       }
       update('companies', companyId, healthPatch);
-      // refresh the current weekly snapshot's dimensions
+      // refresh (or seed) today's snapshot with dimensions + narrative
       const snaps = (all('healthSnapshots') as HealthSnapshot[]).filter((s) => s.companyId === companyId);
       const current = snaps.filter((s) => Object.keys(s.dimensions ?? {}).length > 0).sort((a, b) => +new Date(b.snapshotDate) - +new Date(a.snapshotDate))[0];
-      if (current) update('healthSnapshots', current.id, { overall: res.overall, band: res.band, dimensions: res.dimensions });
+      if (current) update('healthSnapshots', current.id, { overall: res.overall, band: res.band, dimensions: res.dimensions, explanation, recommendations });
+      else insert('healthSnapshots', { id: newId('hs'), companyId, snapshotDate: new Date().toISOString().slice(0, 10), isWeekly: false, overall: res.overall, band: res.band, deltaWow: res.overall - prev, dimensions: res.dimensions, explanation, recommendations, source: 'recompute' } as HealthSnapshot);
       return res;
     },
     onSuccess: (_r, companyId) => {

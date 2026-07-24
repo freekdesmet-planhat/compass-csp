@@ -463,10 +463,11 @@ export async function insertNpsRow(n: { companyId: string; contactId?: string | 
   return rowToNps(data);
 }
 
-export async function upsertHealthSnapshotRow(s: { companyId: string; snapshotDate: string; isWeekly?: boolean; overall: number; band: string; deltaWow: number | null; dimensions: Record<string, unknown>; source?: string }): Promise<void> {
+export async function upsertHealthSnapshotRow(s: { companyId: string; snapshotDate: string; isWeekly?: boolean; overall: number; band: string; deltaWow: number | null; dimensions: Record<string, unknown>; explanation?: string | null; recommendations?: unknown; source?: string }): Promise<void> {
   const { error } = await db().from('health_snapshots').upsert({
     company_id: s.companyId, snapshot_date: s.snapshotDate, is_weekly: s.isWeekly ?? false,
-    overall: s.overall, band: s.band, delta_wow: s.deltaWow, dimensions: s.dimensions, source: s.source ?? 'recompute',
+    overall: s.overall, band: s.band, delta_wow: s.deltaWow, dimensions: s.dimensions,
+    explanation: s.explanation ?? null, recommendations: s.recommendations ?? null, source: s.source ?? 'recompute',
   }, { onConflict: 'company_id,snapshot_date' });
   if (error) throw error;
 }

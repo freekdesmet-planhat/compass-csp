@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardBody, Button, Chip, Tooltip, Input, Switch, DeltaArrow } from '@/components/ui';
 import { useHealthSnapshots, useLatestSnapshot, useRecomputeHealth, useUpdateCompany, useCreateTask, useLogActivity } from '@/lib/hooks';
 import { HEALTH_DIMENSIONS } from '@/lib/segments';
@@ -11,7 +11,7 @@ import type { Company } from '@/lib/types';
 const DIM_COLORS: Record<string, string> = { value: '#7A5AF8', engagement: '#2563EB', support: '#F79009', sentiment: '#12B76A', usage: '#06AED4' };
 
 export function HealthTab({ company }: { company: Company }) {
-  const { data: snapshots = [] } = useHealthSnapshots(company.id);
+  const { data: snapshots = [], isLoading: snapsLoading } = useHealthSnapshots(company.id);
   const latest = useLatestSnapshot(company.id);
   const recompute = useRecomputeHealth();
   const updateCompany = useUpdateCompany();
@@ -23,6 +23,18 @@ export function HealthTab({ company }: { company: Company }) {
   const [valueScore, setValueScore] = useState(company.valueScore?.toString() ?? '');
   const [sentiment, setSentiment] = useState(company.sentimentAssessment?.toString() ?? '');
   const [note, setNote] = useState('');
+
+  // First visit in live mode has no snapshot with dimension detail (the sync only
+  // writes the overall score). Seed one automatically so the breakdown + narrative
+  // render without the user having to click Recompute. Silent — not logged to the timeline.
+  const [autoTriedFor, setAutoTriedFor] = useState<string | null>(null);
+  const hasDims = snapshots.some((s) => Object.keys(s.dimensions ?? {}).length > 0);
+  useEffect(() => {
+    if (!snapsLoading && !hasDims && autoTriedFor !== company.id && company.segment && !recompute.isPending) {
+      setAutoTriedFor(company.id);
+      recompute.mutateAsync(company.id).catch(() => {});
+    }
+  }, [snapsLoading, hasDims, autoTriedFor, company.id, company.segment, recompute]);
 
   const triggerRecompute = async () => {
     const prev = company.healthScore ?? 0;
@@ -115,7 +127,7 @@ export function HealthTab({ company }: { company: Company }) {
       {/* Why this score */}
       <Card className="lg:col-span-3">
         <CardHeader><CardTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-[var(--accent)]" /> Why this score</CardTitle></CardHeader>
-        <CardBody><p className="leading-relaxed">{latest?.explanation ?? 'No narrative yet — click Recompute to generate.'}</p></CardBody>
+        <CardBody><p className="leading-relaxed">{latest?.explanation ?? (recompute.isPending ? 'Generating…' : company.segment ? 'No narrative yet — click Recompute to generate.' : 'Set a segment on this account to compute health.')}</p></CardBody>
       </Card>
 
       {/* Recommendations */}

@@ -247,27 +247,32 @@ function ExpansionHeatmap({ companies }: { companies: Company[] }) {
   );
 }
 
-function quarterOf(date?: string | null): string {
-  if (!date) return 'Unscheduled';
+// Only forecast FY2026 onwards; anything earlier or without a close date is dropped.
+const FORECAST_FROM_YEAR = 2026;
+function quarterParts(date?: string | null): { year: number; q: number } | null {
+  if (!date) return null;
   const d = new Date(date);
-  return `Q${Math.floor(d.getUTCMonth() / 3) + 1} ${d.getUTCFullYear()}`;
+  if (Number.isNaN(d.getTime())) return null;
+  return { year: d.getUTCFullYear(), q: Math.floor(d.getUTCMonth() / 3) + 1 };
 }
 
 function Forecast({ deals, companyById }: { deals: Deal[]; companyById: Map<string, Company> }) {
   const quarters = useMemo(() => {
-    const map = new Map<string, { commit: number; best: number; pipeline: number; healthAdj: number }>();
+    const map = new Map<string, { label: string; sort: number; commit: number; best: number; pipeline: number; healthAdj: number }>();
     for (const d of deals) {
-      const q = quarterOf(d.closeDate);
-      const bucket = map.get(q) ?? { commit: 0, best: 0, pipeline: 0, healthAdj: 0 };
+      const p = quarterParts(d.closeDate);
+      if (!p || p.year < FORECAST_FROM_YEAR) continue;
+      const label = `Q${p.q} ${p.year}`;
+      const bucket = map.get(label) ?? { label, sort: p.year * 4 + p.q, commit: 0, best: 0, pipeline: 0, healthAdj: 0 };
       const amt = d.amount ?? 0;
       const weighted = amt * (d.stageProbability ?? 0.5);
       if (d.forecastCategory === 'commit') bucket.commit += amt;
       else if (d.forecastCategory === 'best_case') bucket.best += amt;
       else bucket.pipeline += weighted;
       bucket.healthAdj += amt * healthFactor(companyById.get(d.companyId)?.healthBand ?? null);
-      map.set(q, bucket);
+      map.set(label, bucket);
     }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    return [...map.values()].sort((a, b) => a.sort - b.sort);
   }, [deals, companyById]);
 
   return (
@@ -283,15 +288,18 @@ function Forecast({ deals, companyById }: { deals: Deal[]; companyById: Map<stri
             <th className="py-1.5 text-right font-medium">Health-adjusted</th>
           </tr></thead>
           <tbody>
-            {quarters.map(([q, b]) => (
-              <tr key={q} className="border-b last:border-0">
-                <td className="py-2 font-medium">{q}</td>
+            {quarters.map((b) => (
+              <tr key={b.label} className="border-b last:border-0">
+                <td className="py-2 font-medium">{b.label}</td>
                 <td className="py-2 text-right tnum">{fmtCurrency(b.commit)}</td>
                 <td className="py-2 text-right tnum">{fmtCurrency(b.best)}</td>
                 <td className="py-2 text-right tnum">{fmtCurrency(b.pipeline)}</td>
                 <td className="py-2 text-right font-medium tnum text-[var(--accent)]">{fmtCurrency(b.healthAdj)}</td>
               </tr>
             ))}
+            {quarters.length === 0 && (
+              <tr><td colSpan={5} className="py-6 text-center text-sm text-muted-foreground">No deals closing in FY2026 or later.</td></tr>
+            )}
           </tbody>
         </table>
         <p className="mt-2 text-xs text-muted-foreground">Health-adjusted = amount × factor (green 1.0 · amber 0.75 · red 0.4).</p>
