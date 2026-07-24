@@ -260,6 +260,17 @@ async function upsertUsageMetrics(supabase: SB, rows: { company_id: string; metr
   return written;
 }
 
+async function upsertCompanyProducts(supabase: SB, rows: { company_id: string; product_id: string; status: string; arr: number | null }[]): Promise<number> {
+  let written = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error } = await supabase.from("company_products").upsert(chunk, { onConflict: "company_id,product_id" });
+    if (error) throw new Error(`company_products upsert [${i}]: ${error.message}`);
+    written += chunk.length;
+  }
+  return written;
+}
+
 serve(async (req) => {
   try {
     assertValidToken();
@@ -569,14 +580,40 @@ serve(async (req) => {
     // clean annual/monthly values; summing licences produced tiny/inflated ARR.
     const lic = await fetchUpdated("/licenses", "");
     const usageRows: { company_id: string; metric_key: string; metric_date: string; value: number }[] = [];
+    // Product ownership (company_products) is derived from licences so the
+    // expansion/whitespace grid reflects what accounts actually own. The catalog
+    // is the 6 seeded products; a licence's product name is matched to the catalog
+    // where possible, otherwise it counts as the base "Core Licence". ARR per
+    // (company, product) is summed from licence value (annual) or mrr×12.
+    const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const { data: catalog } = await supabase.from("products").select("id,name");
+    const products = (catalog ?? []).map((p: any) => ({ id: p.id as string, n: norm(p.name) }));
+    const coreId = products.find((p) => p.n.includes("core") || p.n.includes("licence") || p.n.includes("license"))?.id ?? products[0]?.id ?? null;
+    const matchProduct = (raw: unknown): string | null => {
+      const ln = norm(raw);
+      if (!ln) return coreId;
+      const hit = products.find((p) => p.n === ln || (ln.length >= 4 && (p.n.includes(ln) || ln.includes(p.n))));
+      return hit?.id ?? coreId;
+    };
+    const ownership = new Map<string, { company_id: string; product_id: string; status: string; arr: number }>();
     for (const [, l] of lic.changed) {
       const companyId = resolveCompany(l.companyId ?? l.company);
       if (!companyId) continue;
       const mrr = num(l.mrr) ?? 0;
       const when = l.fromDate ?? l.startDate ?? l.date ?? l.createdAt;
       usageRows.push({ company_id: companyId, metric_key: "license_mrr", metric_date: dateOnly(when ?? Date.now()), value: mrr });
+
+      const productId = coreId ? matchProduct(l.product ?? l.productName ?? l.name) : null;
+      if (productId) {
+        const arr = num(l.value) ?? num(l.arr) ?? mrr * 12;
+        const key = `${companyId}|${productId}`;
+        const prev = ownership.get(key);
+        if (prev) prev.arr += arr;
+        else ownership.set(key, { company_id: companyId, product_id: productId, status: "current", arr });
+      }
     }
     const licUsage = await upsertUsageMetrics(supabase, usageRows);
+    const companyProducts = coreId ? await upsertCompanyProducts(supabase, [...ownership.values()]) : 0;
 
     // ── Dimension data → usage_metrics (GATED: manual + config, windowed) ────
     // Heavy (per company × dimension API calls); NOT for the 30-min cron. Trigger
@@ -640,7 +677,7 @@ serve(async (req) => {
       tasks: { scanned: tk.scanned, changed: tk.changed.size, inserted: tkRes.inserted, updated: tkRes.updated, skipped: tkRes.skipped, sortHonored: tk.sortHonored, incremental: Boolean(tasksSince), unavailable: tk.unavailable },
       nps: { scanned: np.scanned, changed: np.changed.size, inserted: npRes.inserted, updated: npRes.updated, skipped: npRes.skipped, sortHonored: np.sortHonored, incremental: Boolean(npsSince), unavailable: np.unavailable },
       objectives: { scanned: ob.scanned, plans: planRes.inserted + planRes.updated, objectives: objRes.inserted + objRes.updated, fullScan: true, unavailable: ob.unavailable },
-      licenses: { scanned: lic.scanned, usageMetrics: licUsage, fullScan: true, unavailable: lic.unavailable },
+      licenses: { scanned: lic.scanned, usageMetrics: licUsage, companyProducts, fullScan: true, unavailable: lic.unavailable },
       dimensions,
       unavailableObjects,
     };
