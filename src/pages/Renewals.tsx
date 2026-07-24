@@ -2,12 +2,13 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
 import { DataTable, type Column } from '@/components/DataTable';
-import { Card, CardHeader, CardTitle, CardBody, Chip, HealthChip, HealthDot, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, EmptyState } from '@/components/ui';
+import { Card, CardHeader, CardTitle, CardBody, Chip, HealthChip, HealthDot, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, EmptyState, Button } from '@/components/ui';
 import { useVisibleCompanies, useDeals, useProducts, useCompanyProducts } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { fmtCurrency, fmtDateShort, daysUntil, healthFactor } from '@/lib/utils';
 import { WhitespaceCell } from '@/components/Whitespace';
-import { Handshake } from 'lucide-react';
+import { DealModal } from '@/components/modals';
+import { Handshake, Plus } from 'lucide-react';
 import type { Company, Deal, Segment } from '@/lib/types';
 
 const STAGE_ORDER = ['T-120 Review', 'Exec Check-in', 'Proposal Sent', 'Negotiation', 'Verbal Commit', 'Closed Won'];
@@ -38,6 +39,7 @@ export default function RenewalsPage() {
   const { data: companies = [] } = useVisibleCompanies();
   const { data: allDeals = [] } = useDeals();
   const [view, setView] = useState<'kanban' | 'forecast' | 'expansion'>('kanban');
+  const [newDeal, setNewDeal] = useState(false);
   const [segFilter, setSegFilter] = useState<Segment | 'all'>('all');
   const [ownerFilter, setOwnerFilter] = useState('all');
   const [timeFilter, setTimeFilter] = useState<TimeWin>('all');
@@ -132,9 +134,11 @@ export default function RenewalsPage() {
               <button onClick={() => setView('forecast')} className={`rounded px-2 py-1 text-sm font-medium ${view === 'forecast' ? 'bg-panel text-foreground' : 'text-muted-foreground'}`}>Forecast</button>
               <button onClick={() => setView('expansion')} className={`rounded px-2 py-1 text-sm font-medium ${view === 'expansion' ? 'bg-panel text-foreground' : 'text-muted-foreground'}`}>Expansion</button>
             </div>
+            <Button size="sm" variant="primary" onClick={() => setNewDeal(true)}><Plus className="h-3.5 w-3.5" /> New deal</Button>
           </div>
         }
       />
+      <DealModal open={newDeal} onOpenChange={setNewDeal} defaultPipeline="renewal" />
       <PageBody>
         {isManager && (
           <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">

@@ -3,19 +3,21 @@ import { useNavigate } from 'react-router-dom';
 import { PageHeader, PageBody } from '@/components/PageHeader';
 import { Card, CardHeader, CardTitle, CardBody, Button, Chip, HealthDot, Sheet, EmptyState } from '@/components/ui';
 import { useSession } from '@/lib/session';
-import { useDigest, useMeetingPreps, useCompany } from '@/lib/hooks';
-import { fmtCurrency, fmtDate, relativeTime } from '@/lib/utils';
+import { useDigest, useMeetingPreps, useCompany, useTasks, useVisibleCompanies } from '@/lib/hooks';
+import { fmtCurrency, fmtDate, relativeTime, daysUntil } from '@/lib/utils';
 import {
   Calendar, CheckSquare, Bell, TrendingUp, TrendingDown, RefreshCw, FileText,
   Sparkles, CalendarClock, BarChart3,
 } from 'lucide-react';
-import type { MeetingPrep } from '@/lib/types';
+import type { MeetingPrep, DigestContent } from '@/lib/types';
 
 export default function HomePage() {
   const { profile } = useSession();
   const navigate = useNavigate();
   const { data: digest } = useDigest(profile.id, 'daily');
   const { data: preps = [] } = useMeetingPreps();
+  const { data: allTasks = [] } = useTasks();
+  const { data: companies = [] } = useVisibleCompanies();
   const [prepEventId, setPrepEventId] = useState<string | null>(null);
 
   const today = new Date();
@@ -25,6 +27,28 @@ export default function HomePage() {
   const firstName = profile.fullName?.split(' ')[0];
 
   const c = digest?.content;
+
+  // Live, persona-scoped fallbacks — used when no digest exists (real mode has no
+  // digest job). Demo mode keeps its richer generated digest content via `??`.
+  const companyById = new Map(companies.map((co) => [co.id, co]));
+  const liveTasksDue: DigestContent['tasksDue'] = allTasks
+    .filter((t) => !t.completedAt && t.assigneeId === profile.id && (daysUntil(t.dueDate) ?? 99) <= 0)
+    .slice(0, 8)
+    .map((t) => ({ id: t.id, title: t.title, company: companyById.get(t.companyId)?.name ?? '—', companyId: t.companyId, dueDate: t.dueDate, overdue: (daysUntil(t.dueDate) ?? 0) < 0 }));
+  const liveHealthMovers: DigestContent['healthMovers'] = [...companies]
+    .filter((co) => co.healthDeltaWow != null && Math.abs(co.healthDeltaWow) >= 1)
+    .sort((a, b) => Math.abs(b.healthDeltaWow!) - Math.abs(a.healthDeltaWow!))
+    .slice(0, 6)
+    .map((co) => ({ companyId: co.id, company: co.name, score: co.healthScore ?? 0, delta: co.healthDeltaWow ?? 0 }));
+  const liveRenewals: DigestContent['renewalCheckpoints'] = [...companies]
+    .filter((co) => { const d = daysUntil(co.renewalDate); return d != null && d >= 0 && d <= 120; })
+    .sort((a, b) => (daysUntil(a.renewalDate) ?? 0) - (daysUntil(b.renewalDate) ?? 0))
+    .slice(0, 10)
+    .map((co) => ({ companyId: co.id, company: co.name, arr: co.arr ?? 0, daysOut: daysUntil(co.renewalDate) ?? 0 }));
+
+  const tasksDue = c?.tasksDue ?? liveTasksDue;
+  const healthMovers = c?.healthMovers ?? liveHealthMovers;
+  const renewalCheckpoints = c?.renewalCheckpoints ?? liveRenewals;
 
   return (
     <div>
@@ -66,7 +90,7 @@ export default function HomePage() {
                   <button className="flex-1 truncate text-left font-medium hover:text-[var(--accent)]" onClick={() => navigate(`/company/${m.companyId}`)}>{m.company}</button>
                   {m.calendarEventId && <Button size="sm" variant="outline" onClick={() => setPrepEventId(m.calendarEventId!)}><FileText className="h-3.5 w-3.5" /> Prep</Button>}
                 </div>
-              )) : <EmptyRow text="No meetings scheduled today." />}
+              )) : <EmptyRow text="No meetings today — calendar sync not connected." />}
             </CardBody>
           </Card>
 
@@ -74,10 +98,10 @@ export default function HomePage() {
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><CheckSquare className="h-4 w-4 text-muted-foreground" /> Tasks due</CardTitle></CardHeader>
             <CardBody className="space-y-1 p-2">
-              {c?.tasksDue?.length ? c.tasksDue.map((t) => (
+              {tasksDue.length ? tasksDue.map((t) => (
                 <div key={t.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-panel">
                   <span className="flex-1 truncate">{t.title}</span>
-                  <button className="truncate text-sm text-muted-foreground hover:text-[var(--accent)]" onClick={() => navigate(`/company/${t.companyId}`)}>{t.company}</button>
+                  <button className="truncate text-sm text-muted-foreground hover:text-[var(--accent)]" onClick={() => navigate(`/company/${t.companyId}?tab=tasks`)}>{t.company}</button>
                   {t.overdue ? <Chip tone="red">overdue</Chip> : <span className="text-sm text-muted-foreground">{fmtDate(t.dueDate)}</span>}
                 </div>
               )) : <EmptyRow text="No tasks due. Nice." />}
@@ -101,7 +125,7 @@ export default function HomePage() {
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-4 w-4 text-muted-foreground" /> Health movers</CardTitle></CardHeader>
             <CardBody className="space-y-1 p-2">
-              {c?.healthMovers?.length ? c.healthMovers.map((h) => (
+              {healthMovers.length ? healthMovers.map((h) => (
                 <button key={h.companyId} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-panel" onClick={() => navigate(`/company/${h.companyId}`)}>
                   <span className="flex-1 truncate font-medium">{h.company}</span>
                   <span className="text-sm text-muted-foreground tnum">{h.score}</span>
@@ -109,7 +133,7 @@ export default function HomePage() {
                     {h.delta >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />} {Math.abs(h.delta).toFixed(0)}
                   </span>
                 </button>
-              )) : <EmptyRow text="No overnight movers ≥5 pts." />}
+              )) : <EmptyRow text="No health movers week-over-week." />}
             </CardBody>
           </Card>
 
@@ -117,7 +141,7 @@ export default function HomePage() {
           <Card className="lg:col-span-2">
             <CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-muted-foreground" /> Renewal checkpoints</CardTitle></CardHeader>
             <CardBody className="space-y-1 p-2">
-              {c?.renewalCheckpoints?.length ? c.renewalCheckpoints.map((r) => (
+              {renewalCheckpoints.length ? renewalCheckpoints.map((r) => (
                 <button key={r.companyId} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-panel" onClick={() => navigate(`/company/${r.companyId}`)}>
                   <span className="flex-1 truncate font-medium">{r.company}</span>
                   <span className="text-sm text-muted-foreground">{fmtCurrency(r.arr)}</span>

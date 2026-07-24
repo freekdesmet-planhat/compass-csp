@@ -216,7 +216,7 @@ export async function fetchDeals(companyId?: string): Promise<Deal[]> {
   return rows.map(rowToDeal);
 }
 export async function fetchTasks(companyId?: string): Promise<Task[]> {
-  const rows = await fetchAllRows('tasks', (q) => (companyId ? q.eq('company_id', companyId) : q));
+  const rows = await fetchAllRows('tasks', (q) => { const x = q.order('created_at', { ascending: false }); return companyId ? x.eq('company_id', companyId) : x; });
   return rows.map(rowToTask);
 }
 export async function fetchNps(companyId?: string): Promise<NpsResponse[]> {

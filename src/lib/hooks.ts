@@ -576,13 +576,13 @@ export function useCreateDeal() {
       if (!isDemoMode) return insertDealRow({
         companyId: d.companyId, name: d.name, pipeline: d.pipeline ?? 'expansion', stage: d.stage ?? 'Discovery',
         stageProbability: 0.3, forecastCategory: 'pipeline', amount: d.amount ?? null, currency: 'USD',
-        closeDate: d.closeDate ?? null, ownerId: profile.id, status: 'open', confidence: 40, qualification: {}, contactIds: [],
+        closeDate: d.closeDate ?? null, ownerId: d.ownerId ?? profile.id, status: 'open', confidence: 40, qualification: {}, contactIds: [],
       });
       return insert('deals', {
         id: newId('dl'), companyId: d.companyId, hubspotDealId: null, pipeline: d.pipeline ?? 'expansion',
         stage: d.stage ?? 'Discovery', stageProbability: 0.3, forecastCategory: 'pipeline',
         name: d.name, amount: d.amount ?? null, currency: 'USD', closeDate: d.closeDate ?? null,
-        ownerId: profile.id, status: 'open', nextSteps: null, aiSummary: null, confidence: 40,
+        ownerId: d.ownerId ?? profile.id, status: 'open', nextSteps: null, aiSummary: null, confidence: 40,
         qualification: {}, suggestedStage: null, suggestedStageReason: null, contactIds: [], lastSyncedAt: null,
       } as Deal);
     },

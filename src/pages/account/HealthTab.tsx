@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardBody, Button, Chip, Tooltip, Input, Switch, DeltaArrow } from '@/components/ui';
-import { useHealthSnapshots, useLatestSnapshot, useRecomputeHealth, useUpdateCompany, useCreateTask } from '@/lib/hooks';
+import { useHealthSnapshots, useLatestSnapshot, useRecomputeHealth, useUpdateCompany, useCreateTask, useLogActivity } from '@/lib/hooks';
 import { HEALTH_DIMENSIONS } from '@/lib/segments';
+import { useSession } from '@/lib/session';
 import { useToast } from '@/components/toast';
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip as RTooltip, XAxis } from 'recharts';
 import { Sparkles, RefreshCw, Plus } from 'lucide-react';
@@ -15,20 +16,37 @@ export function HealthTab({ company }: { company: Company }) {
   const recompute = useRecomputeHealth();
   const updateCompany = useUpdateCompany();
   const createTask = useCreateTask();
+  const logActivity = useLogActivity();
+  const { profile } = useSession();
   const { toast } = useToast();
 
   const [valueScore, setValueScore] = useState(company.valueScore?.toString() ?? '');
   const [sentiment, setSentiment] = useState(company.sentimentAssessment?.toString() ?? '');
+  const [note, setNote] = useState('');
 
   const triggerRecompute = async () => {
-    await recompute.mutateAsync(company.id);
-    toast('Health recomputed');
+    const prev = company.healthScore ?? 0;
+    const res = await recompute.mutateAsync(company.id);
+    const after = res?.overall ?? prev;
+    await logActivity.mutateAsync({
+      companyId: company.id, type: 'system', title: `Health recomputed by ${profile.fullName}`,
+      snippet: `${note.trim() ? `${note.trim()} · ` : ''}score ${prev} → ${after}`,
+    });
+    setNote('');
+    toast('Health recomputed & logged to timeline');
   };
 
-  const saveManual = async (patch: Partial<Company>) => {
+  const saveManual = async (patch: Partial<Company>, label: string) => {
+    const prev = company.healthScore ?? 0;
     await updateCompany.mutateAsync({ id: company.id, patch });
-    await recompute.mutateAsync(company.id);
-    toast('Updated — health recomputed live');
+    const res = await recompute.mutateAsync(company.id);
+    const after = res?.overall ?? prev;
+    await logActivity.mutateAsync({
+      companyId: company.id, type: 'system', title: `Health updated by ${profile.fullName}`,
+      snippet: `${label}${note.trim() ? ` — ${note.trim()}` : ''} · score ${prev} → ${after}`,
+    });
+    setNote('');
+    toast('Updated — health recomputed & logged to timeline');
   };
 
   const score = company.healthScore ?? 0;
@@ -56,12 +74,13 @@ export function HealthTab({ company }: { company: Company }) {
           </div>
           {/* manual inputs — editable, instant recompute */}
           <div className="mt-2 w-full space-y-2 border-t pt-3">
-            <ManualInput label="Value to client (1–10)" value={valueScore} onChange={setValueScore} onBlur={() => saveManual({ valueScore: valueScore ? Number(valueScore) : null })} />
+            <Input className="h-7 text-sm" placeholder="Reason / note (optional — logged to timeline)" value={note} onChange={(e) => setNote(e.target.value)} />
+            <ManualInput label="Value to client (1–10)" value={valueScore} onChange={setValueScore} onBlur={() => { if (valueScore !== (company.valueScore?.toString() ?? '')) saveManual({ valueScore: valueScore ? Number(valueScore) : null }, `Value to client → ${valueScore || '—'}`); }} />
             {company.valueComment && <p className="text-sm text-muted-foreground">{company.valueComment}</p>}
-            <ManualInput label="Sentiment (1–10)" value={sentiment} onChange={setSentiment} onBlur={() => saveManual({ sentimentAssessment: sentiment ? Number(sentiment) : null })} />
+            <ManualInput label="Sentiment (1–10)" value={sentiment} onChange={setSentiment} onBlur={() => { if (sentiment !== (company.sentimentAssessment?.toString() ?? '')) saveManual({ sentimentAssessment: sentiment ? Number(sentiment) : null }, `Sentiment → ${sentiment || '—'}`); }} />
             <label className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Exec relationship flag (+10)</span>
-              <Switch checked={company.execRelationshipFlag} onCheckedChange={(v) => saveManual({ execRelationshipFlag: v })} />
+              <Switch checked={company.execRelationshipFlag} onCheckedChange={(v) => saveManual({ execRelationshipFlag: v }, `Exec relationship flag → ${v ? 'on' : 'off'}`)} />
             </label>
           </div>
         </CardBody>

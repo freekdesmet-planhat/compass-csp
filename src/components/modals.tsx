@@ -2,17 +2,18 @@
 // and manual NPS entry (A2). All use the existing ui primitives + hooks so they
 // match V1's Attio language and optimistic-store pattern.
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Dialog, DialogContent, DialogTitle, Input, Textarea, Button, Select, SelectTrigger,
   SelectValue, SelectContent, SelectItem, Slider, Chip,
 } from './ui';
 import {
   useCreateTask, useProfiles, useObjectives, useContacts, useLogActivity,
-  useRecomputeHealth, useCreateNps, useVisibleCompanies,
+  useRecomputeHealth, useCreateNps, useVisibleCompanies, useCreateDeal,
 } from '@/lib/hooks';
 import { useSession } from '@/lib/session';
 import { useToast } from './toast';
-import type { TaskType } from '@/lib/types';
+import type { TaskType, DealPipeline } from '@/lib/types';
 import { CheckSquare, Mail, Phone, UserCheck, Calendar } from 'lucide-react';
 
 export const TASK_TYPE_META: Record<TaskType, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
@@ -37,12 +38,14 @@ export function TaskModal({
   const { data: companies = [] } = useVisibleCompanies();
   const createTask = useCreateTask();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const today = new Date().toISOString().slice(0, 10);
 
   const [company, setCompany] = useState(companyId ?? '');
   const [title, setTitle] = useState(defaultTitle);
   const [description, setDescription] = useState(defaultDescription);
   const [taskType, setTaskType] = useState<TaskType>('todo');
-  const [dueDate, setDueDate] = useState(defaultDueDate ?? '');
+  const [dueDate, setDueDate] = useState(defaultDueDate ?? today);
   const [priority, setPriority] = useState<'low' | 'normal' | 'high'>('normal');
   const [assignee, setAssignee] = useState(profile.id);
   const [objectiveId, setObjectiveId] = useState('none');
@@ -52,7 +55,7 @@ export function TaskModal({
   // Re-seed when reopened with fresh defaults (health-tab recommendations).
   const [seed, setSeed] = useState('');
   const key = `${open}-${defaultTitle}`;
-  if (open && key !== seed) { setSeed(key); setTitle(defaultTitle); setDescription(defaultDescription); setDueDate(defaultDueDate ?? ''); setCompany(companyId ?? ''); }
+  if (open && key !== seed) { setSeed(key); setTitle(defaultTitle); setDescription(defaultDescription); setDueDate(defaultDueDate ?? today); setCompany(companyId ?? ''); }
 
   const active = profiles.filter((p) => p.isActive);
   const submit = async () => {
@@ -61,7 +64,11 @@ export function TaskModal({
       companyId: company, title, description, taskType, dueDate: dueDate || null, priority, assigneeId: assignee,
       successPlanObjectiveId: objectiveId === 'none' ? null : objectiveId,
     });
-    toast(assignee === profile.id ? 'Task created' : 'Task created & assignee notified');
+    const target = company;
+    toast(assignee === profile.id ? 'Task created' : 'Task created & assignee notified', {
+      tone: 'success',
+      action: { label: 'View', onClick: () => navigate(`/company/${target}?tab=tasks`) },
+    });
     onOpenChange(false);
   };
 
@@ -239,6 +246,101 @@ export function NpsModal({
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button variant="primary" disabled={!company} onClick={submit}>Log response</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Deal creation modal (P1-3) ────────────────────────────────────────────────
+// Renewal / expansion / new-business deals. companyId prefilled from a 360's
+// Deals tab; a picker is shown on the global Renewals header.
+const PIPELINE_LABELS: Record<DealPipeline, string> = { renewal: 'Renewal', expansion: 'Expansion', new_business: 'New business' };
+const STAGE_OPTIONS: Record<DealPipeline, string[]> = {
+  renewal: ['T-120 Review', 'Exec Check-in', 'Proposal Sent', 'Negotiation', 'Verbal Commit', 'Closed Won'],
+  expansion: ['Discovery', 'Proposal Sent', 'Negotiation', 'Verbal Commit', 'Closed Won'],
+  new_business: ['Discovery', 'Proposal Sent', 'Negotiation', 'Verbal Commit', 'Closed Won'],
+};
+
+export function DealModal({
+  open, onOpenChange, companyId, defaultPipeline = 'expansion',
+}: { open: boolean; onOpenChange: (o: boolean) => void; companyId?: string; defaultPipeline?: DealPipeline }) {
+  const { profile } = useSession();
+  const { data: profiles = [] } = useProfiles();
+  const { data: companies = [] } = useVisibleCompanies();
+  const createDeal = useCreateDeal();
+  const { toast } = useToast();
+  const navigate = useNavigate();
+
+  const [company, setCompany] = useState(companyId ?? '');
+  const [name, setName] = useState('');
+  const [pipeline, setPipeline] = useState<DealPipeline>(defaultPipeline);
+  const [stage, setStage] = useState(STAGE_OPTIONS[defaultPipeline][0]);
+  const [amount, setAmount] = useState('');
+  const [closeDate, setCloseDate] = useState('');
+  const [owner, setOwner] = useState(profile.id);
+
+  const [seed, setSeed] = useState('');
+  const key = `${open}-${companyId}-${defaultPipeline}`;
+  if (open && key !== seed) {
+    setSeed(key); setCompany(companyId ?? ''); setName(''); setPipeline(defaultPipeline);
+    setStage(STAGE_OPTIONS[defaultPipeline][0]); setAmount(''); setCloseDate(''); setOwner(profile.id);
+  }
+
+  const stages = STAGE_OPTIONS[pipeline];
+  const active = profiles.filter((p) => p.isActive);
+
+  const submit = async () => {
+    if (!company || !name.trim()) return;
+    const target = company;
+    await createDeal.mutateAsync({
+      companyId: company, name: name.trim(), pipeline, stage,
+      amount: amount ? Number(amount) : null, closeDate: closeDate || null, ownerId: owner,
+    });
+    toast('Deal created', { tone: 'success', action: { label: 'View', onClick: () => navigate(`/company/${target}?tab=deals`) } });
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogTitle className="text-md font-semibold">New deal</DialogTitle>
+        <div className="mt-3 space-y-3">
+          {!companyId && (
+            <Field label="Account">
+              <Select value={company} onValueChange={setCompany}>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Select account…" /></SelectTrigger>
+                <SelectContent className="max-h-64">{companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+          )}
+          <Input placeholder="Deal name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Pipeline">
+              <Select value={pipeline} onValueChange={(v) => { const p = v as DealPipeline; setPipeline(p); setStage(STAGE_OPTIONS[p][0]); }}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{(Object.keys(PIPELINE_LABELS) as DealPipeline[]).map((p) => <SelectItem key={p} value={p}>{PIPELINE_LABELS[p]}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+            <Field label="Stage">
+              <Select value={stage} onValueChange={setStage}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{stages.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+            <Field label="Amount (USD)"><Input type="number" inputMode="numeric" placeholder="0" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+            <Field label="Close date"><Input type="date" value={closeDate} onChange={(e) => setCloseDate(e.target.value)} /></Field>
+          </div>
+          <Field label="Owner">
+            <Select value={owner} onValueChange={setOwner}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>{active.map((p) => <SelectItem key={p.id} value={p.id}>{p.fullName}</SelectItem>)}</SelectContent>
+            </Select>
+          </Field>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button variant="primary" disabled={!name.trim() || !company} onClick={submit}>Create deal</Button>
           </div>
         </div>
       </DialogContent>

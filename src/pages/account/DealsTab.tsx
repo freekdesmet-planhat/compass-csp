@@ -1,11 +1,13 @@
+import { useState } from 'react';
 import { useDeals, useUpdateDeal, useLogActivity } from '@/lib/hooks';
 import { Card, CardBody, Chip, Button, EmptyState, Progress } from '@/components/ui';
 import { WhitespaceStrip } from '@/components/Whitespace';
+import { DealModal } from '@/components/modals';
 import { useToast } from '@/components/toast';
 import { useSession } from '@/lib/session';
 import { fmtCurrency, fmtDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
-import { Handshake, ExternalLink, Check, X, Sparkles } from 'lucide-react';
+import { Handshake, ExternalLink, Check, X, Sparkles, Plus } from 'lucide-react';
 import type { Company, Deal } from '@/lib/types';
 
 // Canonical MEDDIC criteria; union with whatever keys the deal already carries.
@@ -14,12 +16,15 @@ type TriState = true | false | null;
 
 export function DealsTab({ company }: { company: Company }) {
   const { data: deals = [] } = useDeals(company.id);
+  const [newDeal, setNewDeal] = useState(false);
   return (
     <div className="space-y-3">
+      <div className="flex justify-end"><Button size="sm" variant="primary" onClick={() => setNewDeal(true)}><Plus className="h-3.5 w-3.5" /> New deal</Button></div>
+      <DealModal open={newDeal} onOpenChange={setNewDeal} companyId={company.id} />
       <Card><CardBody><WhitespaceStrip companyId={company.id} /></CardBody></Card>
       {deals.length
         ? deals.map((d) => <DealCard key={d.id} deal={d} />)
-        : <EmptyState icon={Handshake} title="No deals" hint="Renewal and expansion deals sync from HubSpot." />}
+        : <EmptyState icon={Handshake} title="No deals" hint="Create a renewal or expansion deal, or sync from HubSpot." action={<Button variant="primary" onClick={() => setNewDeal(true)}>New deal</Button>} />}
     </div>
   );
 }
