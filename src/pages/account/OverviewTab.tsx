@@ -58,7 +58,7 @@ export function OverviewTab({ company }: { company: Company }) {
 
         <Panel title="Renewal">
           <Kv k="Date" v={fmtDate(company.renewalDate)} />
-          <Kv k="ARR" v={fmtCurrency(company.renewalArr)} />
+          <Kv k="Renewal ARR" v={fmtCurrency(company.renewalArr)} />
           <Kv k="Countdown" v={`T-${daysUntil(company.renewalDate)}`} />
           {renewalDeal && <><Kv k="Stage" v={renewalDeal.stage ?? '—'} /><div className="mt-1 text-sm text-muted-foreground">{renewalDeal.nextSteps?.split('\n')[0]}</div></>}
         </Panel>

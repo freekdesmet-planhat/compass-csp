@@ -30,7 +30,7 @@ export default function TasksPage() {
     <div>
       <PageHeader
         title="Tasks"
-        subtitle={`${buckets.day.length} due today/overdue · ${myTasks.filter((t) => !t.completedAt).length} open`}
+        subtitle={`${buckets.day.length} due today/overdue · ${myTasks.filter((t) => !t.completedAt).length} open · ${myTasks.length} total`}
         actions={
           <div className="flex items-center gap-2">
             <div className="flex rounded-md border p-0.5">
@@ -85,7 +85,7 @@ function TaskList({ tasks, groupBy, companyById, navigate, loading }: { tasks: T
                   <button onClick={() => toggle.mutate(t)} className={cn('flex h-4 w-4 items-center justify-center rounded border', t.completedAt ? 'border-[var(--green)] bg-[var(--green)] text-white' : 'border-[#d0d5dd]')}>
                     {t.completedAt && <CheckSquare className="h-3 w-3" />}
                   </button>
-                  <span className={cn('flex-1', t.completedAt && 'text-muted-foreground line-through')}>{t.title}</span>
+                  <span className={cn('flex-1', t.completedAt && 'text-muted-foreground line-through', !t.title?.trim() && 'italic text-muted-foreground')}>{t.title?.trim() || 'Untitled task'}</span>
                   {t.origin !== 'manual' && <Chip>{t.origin.replace(/_/g, ' ')}</Chip>}
                   {t.priority === 'high' && <Chip tone="red">high</Chip>}
                   <button className="text-sm text-muted-foreground hover:text-[var(--accent)]" onClick={() => navigate(`/company/${t.companyId}?tab=tasks`)}>{companyById.get(t.companyId)?.name}</button>

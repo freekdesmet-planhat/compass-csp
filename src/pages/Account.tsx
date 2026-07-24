@@ -299,7 +299,7 @@ function TasksTab({ companyId }: { companyId: string }) {
           </span>
         </button>
         <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className={cn('flex-1', t.completedAt ? 'text-muted-foreground line-through' : 'font-medium')}>{t.title}</span>
+        <span className={cn('flex-1', t.completedAt ? 'text-muted-foreground line-through' : 'font-medium', !t.title?.trim() && 'italic font-normal text-muted-foreground')}>{t.title?.trim() || 'Untitled task'}</span>
         <Chip>{t.origin.replace(/_/g, ' ')}</Chip>
         <Chip tone={t.priority === 'high' ? 'red' : 'neutral'}>{t.priority}</Chip>
         <span className="w-24 text-right text-sm text-muted-foreground">{fmtDate(t.dueDate)}</span>

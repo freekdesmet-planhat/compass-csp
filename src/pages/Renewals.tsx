@@ -86,9 +86,13 @@ export default function RenewalsPage() {
     return c.status !== 'churned';
   });
 
+  const accountsUpForRenewal = filteredCompanies.filter((c) => (c.renewalArr ?? 0) > 0).length;
   const upForRenewal = filteredCompanies.reduce((a, c) => a + (c.renewalArr ?? 0), 0);
   const retained = renewalDeals.filter((d) => d.status !== 'lost').reduce((a, d) => a + (d.amount ?? 0), 0);
   const expansion = allDeals.filter((d) => d.pipeline === 'expansion' && visibleIds.has(d.companyId)).reduce((a, d) => a + (d.amount ?? 0), 0);
+  // GRR/NRR need settled renewal outcomes. Planhat opportunities aren't tagged as
+  // renewals, so when there are none, show "—" rather than a misleading 0%/2%.
+  const hasRenewalOutcomes = renewalDeals.length > 0;
   const grr = upForRenewal ? Math.round((retained / upForRenewal) * 100) : 0;
   const nrr = upForRenewal ? Math.round(((retained + expansion) / upForRenewal) * 100) : 0;
   const owners = allProfiles.filter((p) => p.role === 'csm');
@@ -108,7 +112,7 @@ export default function RenewalsPage() {
     <div>
       <PageHeader
         title="Renewals"
-        subtitle={`${boardDeals.length} open deals · ${renewalDeals.length} renewals · ${fmtCurrency(upForRenewal)} up for renewal`}
+        subtitle={`${boardDeals.length} open deals · ${accountsUpForRenewal} accounts up for renewal · ${fmtCurrency(upForRenewal)} at renewal`}
         actions={
           <div className="flex items-center gap-2">
             {isManager && (
@@ -143,8 +147,8 @@ export default function RenewalsPage() {
         {isManager && (
           <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
             <Stat label="Up for renewal" value={fmtCurrency(upForRenewal)} />
-            <Stat label="GRR (est.)" value={`${grr}%`} />
-            <Stat label="NRR (est.)" value={`${nrr}%`} />
+            <Stat label="GRR (est.)" value={hasRenewalOutcomes ? `${grr}%` : '—'} />
+            <Stat label="NRR (est.)" value={hasRenewalOutcomes ? `${nrr}%` : '—'} />
             <Stat label="Expansion pipeline" value={fmtCurrency(expansion)} />
           </div>
         )}
@@ -266,10 +270,16 @@ function Forecast({ deals, companyById }: { deals: Deal[]; companyById: Map<stri
       const bucket = map.get(label) ?? { label, sort: p.year * 4 + p.q, commit: 0, best: 0, pipeline: 0, healthAdj: 0 };
       const amt = d.amount ?? 0;
       const weighted = amt * (d.stageProbability ?? 0.5);
-      if (d.forecastCategory === 'commit') bucket.commit += amt;
-      else if (d.forecastCategory === 'best_case') bucket.best += amt;
+      // Each deal's expected contribution to the quarter: commit/best count in full,
+      // uncommitted pipeline is stage-weighted. Health-adjusted applies the health
+      // factor (≤1) to that same contribution, so it can never exceed the base.
+      const commit = d.forecastCategory === 'commit';
+      const best = d.forecastCategory === 'best_case';
+      const contribution = commit ? amt : best ? amt : weighted;
+      if (commit) bucket.commit += amt;
+      else if (best) bucket.best += amt;
       else bucket.pipeline += weighted;
-      bucket.healthAdj += amt * healthFactor(companyById.get(d.companyId)?.healthBand ?? null);
+      bucket.healthAdj += contribution * healthFactor(companyById.get(d.companyId)?.healthBand ?? null);
       map.set(label, bucket);
     }
     return [...map.values()].sort((a, b) => a.sort - b.sort);
@@ -302,7 +312,7 @@ function Forecast({ deals, companyById }: { deals: Deal[]; companyById: Map<stri
             )}
           </tbody>
         </table>
-        <p className="mt-2 text-xs text-muted-foreground">Health-adjusted = amount × factor (green 1.0 · amber 0.75 · red 0.4).</p>
+        <p className="mt-2 text-xs text-muted-foreground">Health-adjusted = expected contribution (commit/best in full, pipeline stage-weighted) × health factor (green 1.0 · amber 0.75 · red 0.4).</p>
       </CardBody>
     </Card>
   );
