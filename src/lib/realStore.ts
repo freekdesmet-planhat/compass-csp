@@ -434,6 +434,105 @@ export async function updateDealRow(id: string, patch: Record<string, any>): Pro
 }
 
 const ALERT_COLS: Record<string, string> = { status: 'status', snoozedUntil: 'snoozed_until', ownerId: 'owner_id' };
+// ── CSV import (real mode) ────────────────────────────────────────────────────
+// Mirrors the demo-store import in Import.tsx, but writes to Supabase. Reference
+// data (companies/profiles/contacts) is fetched once (RLS-scoped); rows are then
+// matched + inserted/updated per the chosen mode.
+export interface ImportStats { created: number; updated: number; skipped: number; errors: { row: number; msg: string }[] }
+type ImportMode = 'create' | 'update' | 'upsert';
+const VALID_SEGMENTS = new Set(['scaled', 'mid_touch', 'enterprise']);
+const errMsg = (e: any) => (e?.message ? String(e.message).slice(0, 100) : 'Row failed');
+
+export async function importCompanyRecords(
+  recs: { row: number; name: string; domain: string; extId: string; arr: number | null; segment: string; ownerEmail: string }[],
+  mode: ImportMode,
+): Promise<ImportStats> {
+  const stats: ImportStats = { created: 0, updated: 0, skipped: 0, errors: [] };
+  const [companies, profiles] = await Promise.all([fetchCompanies(), fetchProfiles()]);
+  const ownerId = (email: string) => profiles.find((p) => p.email === email)?.id ?? null;
+  for (const r of recs) {
+    try {
+      if (!r.name) { stats.errors.push({ row: r.row, msg: 'Missing name' }); continue; }
+      if (r.ownerEmail && !ownerId(r.ownerEmail)) { stats.errors.push({ row: r.row, msg: `Unknown owner "${r.ownerEmail}"` }); continue; }
+      const existing = companies.find((c) => (r.domain && c.domains?.includes(r.domain)) || (r.extId && c.hubspotCompanyId === r.extId));
+      const patch: Record<string, any> = { name: r.name, arr: r.arr, segment: VALID_SEGMENTS.has(r.segment) ? r.segment : null, owner_id: ownerId(r.ownerEmail) };
+      if (r.domain) patch.domains = [r.domain];
+      if (existing) {
+        if (mode === 'create') { stats.skipped++; continue; }
+        const { error } = await db().from('companies').update(patch).eq('id', existing.id);
+        if (error) throw error;
+        stats.updated++;
+      } else {
+        if (mode === 'update') { stats.skipped++; continue; }
+        const { error } = await db().from('companies').insert({ ...patch, status: 'customer', source: 'csv_import', source_id: r.extId || null });
+        if (error) throw error;
+        stats.created++;
+      }
+    } catch (e) { stats.errors.push({ row: r.row, msg: errMsg(e) }); }
+  }
+  return stats;
+}
+
+export async function importContactRecords(
+  recs: { row: number; firstName: string; lastName: string; email: string; title: string; companyDomain: string }[],
+  mode: ImportMode,
+): Promise<ImportStats> {
+  const stats: ImportStats = { created: 0, updated: 0, skipped: 0, errors: [] };
+  const [companies, contacts] = await Promise.all([fetchCompanies(), fetchContacts()]);
+  for (const r of recs) {
+    try {
+      if (!r.email) { stats.errors.push({ row: r.row, msg: 'Missing email' }); continue; }
+      const company = companies.find((c) => c.domains?.includes(r.companyDomain));
+      if (!company) { stats.errors.push({ row: r.row, msg: `No company for domain "${r.companyDomain}"` }); continue; }
+      const existing = contacts.find((c) => c.email === r.email);
+      const patch: Record<string, any> = { first_name: r.firstName, last_name: r.lastName, email: r.email, title: r.title || null, company_id: company.id };
+      if (existing) {
+        if (mode === 'create') { stats.skipped++; continue; }
+        const { error } = await db().from('contacts').update(patch).eq('id', existing.id);
+        if (error) throw error;
+        stats.updated++;
+      } else {
+        if (mode === 'update') { stats.skipped++; continue; }
+        const { error } = await db().from('contacts').insert({ ...patch, source: 'csv_import' });
+        if (error) throw error;
+        stats.created++;
+      }
+    } catch (e) { stats.errors.push({ row: r.row, msg: errMsg(e) }); }
+  }
+  return stats;
+}
+
+export async function importUsageRecords(
+  recs: { row: number; extId: string; key: string; date: string; value: number }[],
+  mode: ImportMode,
+): Promise<ImportStats> {
+  const stats: ImportStats = { created: 0, updated: 0, skipped: 0, errors: [] };
+  const companies = await fetchCompanies();
+  const byExt = (extId: string) => companies.find((c) => c.hubspotCompanyId === extId);
+  // Prefetch existing natural keys for the companies in this batch so create/update
+  // modes are honoured. Chunk the .in() to stay well under URL/stream limits.
+  const companyIds = [...new Set(recs.map((r) => byExt(r.extId)?.id).filter(Boolean) as string[])];
+  const existingKeys = new Set<string>();
+  for (let i = 0; i < companyIds.length; i += 100) {
+    const chunk = companyIds.slice(i, i + 100);
+    const { data } = await db().from('usage_metrics').select('company_id,metric_key,metric_date').in('company_id', chunk);
+    (data ?? []).forEach((u: any) => existingKeys.add(`${u.company_id}|${u.metric_key}|${u.metric_date}`));
+  }
+  for (const r of recs) {
+    try {
+      const company = byExt(r.extId);
+      if (!company) { stats.errors.push({ row: r.row, msg: `No company for "${r.extId}"` }); continue; }
+      const exists = existingKeys.has(`${company.id}|${r.key}|${r.date}`);
+      if (exists && mode === 'create') { stats.skipped++; continue; }
+      if (!exists && mode === 'update') { stats.skipped++; continue; }
+      const { error } = await db().from('usage_metrics').upsert({ company_id: company.id, metric_key: r.key, metric_date: r.date, value: r.value }, { onConflict: 'company_id,metric_key,metric_date' });
+      if (error) throw error;
+      if (exists) stats.updated++; else stats.created++;
+    } catch (e) { stats.errors.push({ row: r.row, msg: errMsg(e) }); }
+  }
+  return stats;
+}
+
 export function rowToAlertRule(r: any): AlertRule {
   return { id: r.id, name: r.name ?? '', description: r.description ?? null, ruleType: r.rule_type ?? '', config: r.config ?? {}, segment: r.segment ?? [], enabled: r.enabled ?? true, severity: r.severity ?? 'warning' };
 }

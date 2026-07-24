@@ -11,8 +11,11 @@ import {
   Card, CardBody, Button, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Chip,
 } from '@/components/ui';
 import { useSession } from '@/lib/session';
+import { useProfiles } from '@/lib/hooks';
 import { useToast } from '@/components/toast';
 import { all, insert, update, newId } from '@/lib/store';
+import { isDemoMode } from '@/lib/supabase';
+import { importCompanyRecords, importContactRecords, importUsageRecords, type ImportStats } from '@/lib/realStore';
 import { Upload, ArrowRight, ArrowLeft, Download, CheckCircle2 } from 'lucide-react';
 import type { Company, Contact, UsageMetric, ImportRun } from '@/lib/types';
 
@@ -60,9 +63,11 @@ export default function ImportPage() {
 
 export function ImportWizard() {
   const { profile } = useSession();
+  const { data: profiles = [] } = useProfiles();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [step, setStep] = useState(0);
+  const [running, setRunning] = useState(false);
   const [entity, setEntity] = useState<Entity>('companies');
   const [headers, setHeaders] = useState<string[]>([]);
   const [rows, setRows] = useState<string[][]>([]);
@@ -89,7 +94,7 @@ export function ImportWizard() {
 
   const validation = useMemo(() => {
     const errs: { row: number; msg: string }[] = [];
-    const owners = all('profiles') as { email: string }[];
+    const owners = (isDemoMode ? (all('profiles') as { email: string }[]) : profiles) as { email: string }[];
     const seen = new Set<string>();
     rows.forEach((r, i) => {
       for (const f of fields) if (f.required && !col(r, f.key)) errs.push({ row: i + 2, msg: `Missing ${f.label}` });
@@ -99,9 +104,40 @@ export function ImportWizard() {
     });
     return errs;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, mapping, entity, fields]);
+  }, [rows, mapping, entity, fields, profiles]);
 
-  const run = () => {
+  // Real mode: write to Supabase via realStore batch helpers. Demo mode: the
+  // existing in-memory store logic below.
+  const runReal = async (): Promise<ImportStats> => {
+    if (entity === 'companies') {
+      return importCompanyRecords(rows.map((r, i) => ({ row: i + 2, name: col(r, 'name'), domain: col(r, 'domain'), extId: col(r, 'external_id'), arr: Number(col(r, 'arr')) || null, segment: col(r, 'segment'), ownerEmail: col(r, 'owner_email') })), mode);
+    }
+    if (entity === 'contacts') {
+      return importContactRecords(rows.map((r, i) => ({ row: i + 2, firstName: col(r, 'first_name'), lastName: col(r, 'last_name'), email: col(r, 'email'), title: col(r, 'title'), companyDomain: col(r, 'company_domain') })), mode);
+    }
+    return importUsageRecords(rows.map((r, i) => ({ row: i + 2, extId: col(r, 'company_external_id'), key: col(r, 'metric_key'), date: col(r, 'date'), value: Number(col(r, 'value')) })), mode);
+  };
+
+  const run = async () => {
+    setRunning(true);
+    try {
+      if (!isDemoMode) {
+        const res = await runReal();
+        setResult(res);
+        qc.invalidateQueries();
+        setStep(4);
+        toast(`Import complete: ${res.created} created, ${res.updated} updated`);
+        return;
+      }
+      runDemo();
+    } catch (e) {
+      toast(`Import failed: ${e instanceof Error ? e.message : 'unknown error'}`, { tone: 'error' });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const runDemo = () => {
     let created = 0, updated = 0, skipped = 0; const errors: { row: number; msg: string }[] = [];
     const profiles = all('profiles') as { id: string; email: string }[];
     rows.forEach((r, i) => {
@@ -205,7 +241,7 @@ export function ImportWizard() {
                 <SelectContent><SelectItem value="create">Create only</SelectItem><SelectItem value="update">Update matches</SelectItem><SelectItem value="upsert">Upsert</SelectItem></SelectContent>
               </Select>
             </div>
-            <div className="mt-4 flex gap-2"><Button variant="ghost" onClick={() => setStep(2)}><ArrowLeft className="h-3.5 w-3.5" /> Back</Button><Button variant="primary" onClick={run}>Run import</Button></div>
+            <div className="mt-4 flex gap-2"><Button variant="ghost" disabled={running} onClick={() => setStep(2)}><ArrowLeft className="h-3.5 w-3.5" /> Back</Button><Button variant="primary" disabled={running} onClick={run}>{running ? 'Running…' : 'Run import'}</Button></div>
           </div>
         )}
         {step === 4 && result && (
